@@ -83,7 +83,7 @@ directly, so it works when magpie is not running:
 ## Install
 
 ```sh
-magpie plugin add github:CrazyTomatooOo/magpie-acp-context   # the published path
+magpie plugin add github:crazytomatooo/magpie-acp-context    # the published path
 magpie plugin add ./                                        # or a checkout, for development
 magpie plugin options magpie-acp-context '{"enabled":true,"keepRecentTurns":3}'
 ```
