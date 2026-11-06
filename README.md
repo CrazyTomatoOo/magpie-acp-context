@@ -61,6 +61,15 @@ to every agent at `/mcp/magpie/tools`:
 `<short>` is the plugin's short name — the folder name it was added from, capped at 24
 characters. Install it as `magpie-acp-context` to get `magpie-acp-context_decompress`.
 
+**What a client reads back is not that name.** Every hop renames the tool on its own terms — an
+MCP client shows `mcp__magpie__magpie-acp-context_compress`, and magpie's own forwarding to omp
+returns `_mcp__magpie_acp_context_compress` (leading underscore, dots and dashes folded to
+underscores). A settle rule that matched the literal name therefore never fired on those clients:
+the agent kept being told to compress while nothing was ever folded, with no error anywhere.
+The rule now compares on a canonical form and only requires that the plugin's own prefix appears
+somewhere in the name, so any rewrite that keeps the prefix still settles, while a foreign
+`foo_compress` is still refused. `test/compress-names.test.mjs` pins both directions.
+
 Tools run in the plugin host with Bun's full runtime (55 s cap), which is the half of ACP the
 hook cannot do: the hook sees one request and one reply under a 1 s default budget, and nothing
 it returns can inject a tool result into the stream. The client executes the tool; the result becomes an ordinary tool
@@ -90,9 +99,13 @@ magpie plugin add ./                                        # or a checkout, for
 magpie plugin options magpie-acp-context '{"enabled":true,"keepRecentTurns":3}'
 ```
 
-The repository must carry the `magpie-plugin` tag. The plugin's short name is its folder name
-capped at 24 characters, so install it as `magpie-acp-context`: any shorter name renames the
-tools (`<short>_compress`, …).
+The repository carries two kinds of tags and they mean different things: `magpie-plugin` is the
+**install pointer** and always names the current build (it moves forward, so `magpie plugin
+update` is enough to pick up fixes), while `vX.Y.Z` tags are immutable releases — pin one with
+`github:crazytomatooo/magpie-acp-context#v0.1.1` if you want a frozen build.
+
+The plugin's short name is its folder name capped at 24 characters, so install it as
+`magpie-acp-context`: any shorter name renames the tools (`<short>_compress`, …).
 
 Hooks are loaded at gateway start: after `plugin add`, `plugin update` or an option change the
 plugin code itself only takes effect once magpie restarts. Options read from the environment or
@@ -202,9 +215,10 @@ facts and the measured run.
 ## Tests
 
 ```sh
-bun test test/                       # 78 unit tests: refs, folds, protocols, safety rules,
+bun test test/                       # 85 unit tests: refs, folds, protocols, safety rules,
                                      # tools, usage shapes, nudge rules, eviction,
-                                     # compaction, reconcile, CLI, inherited sessions
+                                     # compaction, reconcile, CLI, inherited sessions,
+                                     # and the tool-name shapes real wires send back
 ./test/e2e/run.sh                    # container end-to-end: 6,933 B request → 1,269 B on the wire,
                                      # a nudge on the wire, all four tools over MCP,
                                      # the billed prompt tokens landing in acp_status,
@@ -212,6 +226,14 @@ bun test test/                       # 78 unit tests: refs, folds, protocols, sa
                                      # the client's session header naming the ledger,
                                      # and the store surviving a restart
 ```
+
+A real client has also been driven through a containerised magpie (omp v18.16.0, two turns over
+one conversation, the fake upstream recording what magpie actually sent): the provider body fell
+from 42,061 to 34,088 bytes once the fold settled (−19.0%, reproduced at −7,973 bytes on a second
+run), the `[acp] m00001–m00001` marker replaced the original on the wire, `decompress` returned
+the 8,629-byte original by ref, and the ref was unchanged on the next turn. That run is what
+turned up the tool-name, block-array and single-message-range defects — none of them reachable
+from the container e2e, which speaks the shapes this package itself emits.
 
 `test/e2e` runs magpie and a fake provider inside `ubuntu:22.04` with `--network none`,
 `--read-only`, `:ro` mounts and one output directory — nothing on the host is written. It
