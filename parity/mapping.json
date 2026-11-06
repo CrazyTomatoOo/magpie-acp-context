@@ -1,0 +1,23 @@
+{
+  "refs.format": { "option": "refFormat" },
+  "refs.width": { "option": "refFormat" },
+  "tools.names": { "option": "COMPRESS_TOOL_NAMES (src/compress.mjs)" },
+  "tools.compressPropertyKeys": { "note": "沿用 content 单字段，与 #4252 之后的上游一致" },
+  "config.compress.minCompressRange": { "option": "minRangeBytes" },
+  "config.compress.maxSummaryLength": { "option": "maxSummaryChars" },
+  "config.compress.minSummaryLength": { "note": "未实现对摘要最小长度的校验" },
+  "config.nudge.minContextLimitPct": { "option": "nudge.minContextPct" },
+  "config.nudge.growthFloor": { "option": "nudge.growthFloor" },
+  "config.nudge.minGrowthRatio": { "option": "nudge.growthRatio" },
+  "config.nudge.emergencyThresholdPct": { "option": "nudge.emergencyPct" },
+  "config.nudge.growthCap": { "note": "上游用它封顶增长量，我们不封顶" },
+  "config.nudge.minGrowthFloor": { "note": "我们把地板取 max(growthFloor, window×growthRatio)，没有单独的地板" },
+  "config.preserveRecentMessages": { "option": "keepRecentTurns", "note": "上游按条计，我们按轮计" },
+  "config.tiers.*": { "note": "分级蒸馏要代理侧改写历史，插件结构上做不到" },
+  "config.promotionThreshold": { "note": "同上（分级蒸馏的一部分）" },
+  "config.truncate.*": { "note": "我们只提示不截断" },
+  "config.ccr.minToolTokens": { "note": "原文一律落盘，没有阈值" },
+  "marker": { "note": "📦 [ACP] 是上游自己的响应流标记，我们不产生" },
+  "prompts.*": { "note": "提示词是我们自己写的，不复用上游文本" },
+  "pipeline": { "note": "17 个节点里只等价实现 assign-refs 与折叠两端" }
+}

@@ -1,0 +1,46 @@
+{
+  "name": "magpie-acp-context",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./tools.mjs",
+  "exports": {
+    "./tools": "./tools.mjs",
+    "./hooks": "./hooks.mjs"
+  },
+  "description": "ACP-style context compression for magpie, as async gateway hooks",
+  "magpie": {
+    "hooks": "./hooks.mjs",
+    "options": {
+      "enabled": false,
+      "mode": "assist",
+      "injectStyle": "append-user",
+      "refFormat": "m%05d",
+      "minRangeBytes": 5000,
+      "maxSummaryChars": 20000,
+      "keepRecentTurns": 3,
+      "nudge": {
+        "windowTokens": 200000,
+        "minContextPct": 0.45,
+        "growthFloor": 50000,
+        "growthRatio": 0.45,
+        "emergencyPct": 0.95
+      },
+      "store": {
+        "dir": "~/.local/share/magpie-acp",
+        "maxBytes": 536870912,
+        "ttlDays": 30
+      },
+      "gatewayTimeoutMs": 3000,
+      "failOpen": true
+    }
+  },
+  "scripts": {
+    "test": "bun test test/",
+    "cli": "node cli.mjs",
+    "parity": "node scripts/parity-check.mjs"
+  },
+  "bin": {
+    "magpie-acp": "./cli.mjs"
+  }
+}

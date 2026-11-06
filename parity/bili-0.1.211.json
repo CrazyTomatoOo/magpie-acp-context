@@ -1,0 +1,81 @@
+{
+  "version": "0.1.211",
+  "refs": {
+    "width": 5,
+    "format": "m%05d"
+  },
+  "tools": {
+    "names": [
+      "acp_cache",
+      "acp_status",
+      "compress",
+      "decompress",
+      "search_context"
+    ],
+    "compressToolKeys": [
+      "type",
+      "properties"
+    ],
+    "compressPropertyKeys": [
+      "content"
+    ],
+    "advertisesTopic": false,
+    "advertisesAnyOf": false
+  },
+  "pipeline": [
+    "reconcileLiveIdsNode",
+    "createStampTimestampsNode",
+    "assignRefsNode",
+    "syncBlocksNode",
+    "pruneNode",
+    "preTransformSnapshotNode",
+    "ccrStoreNode",
+    "absorbHideNode",
+    "crushNode",
+    "absorbPromptNode",
+    "filterNode",
+    "hideCompressCallsNode",
+    "relocateCompressCarriersNode",
+    "viewLatchNode",
+    "recommendNode",
+    "nudgeNode",
+    "emergencyTruncateNode"
+  ],
+  "marker": "/^\\p{So}(?:[ \\t])?\\[ACP\\][^\\n]*\\n?/gmu",
+  "prompts": {
+    "acpTags": "b206b7e457696c97",
+    "systemPrompt": "2e61561e6c540550"
+  },
+  "config": {
+    "tiers.enabled": true,
+    "tiers.tier2Trigger": 1000,
+    "tiers.tier3Trigger": 2000,
+    "nudge.maxContextLimitPct": 0.75,
+    "nudge.minContextLimitPct": 0.45,
+    "nudge.frequency": 5,
+    "nudge.iterationThreshold": 15,
+    "nudge.growthRatio": 0.05,
+    "nudge.growthFloor": 50000,
+    "nudge.growthCap": 50000,
+    "nudge.minGrowthFloor": 20000,
+    "nudge.minGrowthRatio": 0.45,
+    "nudge.emergencyThresholdPct": 0.95,
+    "nudge.tier2GrowthMultiplier": 1.5,
+    "promotionThreshold": 5,
+    "truncate.threshold": 0.95,
+    "truncate.terminalEscapeAfter": 3,
+    "compress.minCompressRange": 5000,
+    "compress.maxSummaryLength": 20000,
+    "compress.minSummaryLength": 50,
+    "preserveRecentMessages": 3,
+    "preserveRecentTokens": 5000,
+    "absorb.enabled": false,
+    "absorb.minToolTokens": 4000,
+    "absorb.contextThresholdPct": 0,
+    "crush.enabled": false,
+    "crush.minReduction": 0.1,
+    "ccr.enabled": false,
+    "ccr.minToolTokens": 4000,
+    "ccr.maxHeadChars": 96
+  }
+}
