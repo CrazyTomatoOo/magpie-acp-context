@@ -313,3 +313,86 @@ describe("acp_status version check cache", () => {
     expect(existsSync(cacheFile(dir))).toBe(true);
   });
 });
+
+describe("acp_status updateCheck gate", () => {
+  const realFetch = globalThis.fetch;
+  const realCwd = process.cwd();
+  const realEnv = process.env.MAGPIE_ACP_UPDATE_CHECK;
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    process.chdir(realCwd);
+    if (realEnv === undefined) delete process.env.MAGPIE_ACP_UPDATE_CHECK;
+    else process.env.MAGPIE_ACP_UPDATE_CHECK = realEnv;
+  });
+
+  const statusTool = async (options = {}) =>
+    (await acpTools(undefined, { store: { dir: store() }, ...options })).tool.acp_status;
+
+  const stubFetch = (respond) => {
+    const calls = [];
+    globalThis.fetch = (input, init) => {
+      calls.push({ input: String(input), init });
+      return respond();
+    };
+    return calls;
+  };
+
+  const installCopy = (version) => {
+    const cwd = mkdtempSync(join(tmpdir(), "acp-version-"));
+    const dir = join(cwd, "plugins", "node_modules", "magpie-acp-context");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "magpie-acp-context", version }));
+    process.chdir(cwd);
+    return cwd;
+  };
+
+  const cacheFile = (dir) => join(dir, "version-check.json");
+  const writeCache = (dir, latest, at) => writeFileSync(cacheFile(dir), JSON.stringify({ latest, at }));
+
+  test("on by default: a cold call performs exactly one fetch and prints the line", async () => {
+    installCopy("0.2.2");
+    const calls = stubFetch(() => Response.json({ version: "0.2.3" }));
+    const out = await (await statusTool()).execute({});
+    expect(calls.length).toBe(1);
+    expect(out.split("\n")[1]).toBe("version 0.2.2 · latest 0.2.3");
+  });
+
+  test("updateCheck: false prints no version line and performs zero fetches", async () => {
+    installCopy("0.2.2");
+    const calls = stubFetch(() => Response.json({ version: "0.2.3" }));
+    const out = await (await statusTool({ updateCheck: false })).execute({});
+    expect(calls.length).toBe(0);
+    expect(out).not.toContain("version ");
+    expect(out).not.toContain("latest");
+    expect(out.split("\n")[1]).toMatch(/^store /); // the store report sits where the line would be
+  });
+
+  test("updateCheck: false reads no cache: an entry stale enough to force a fetch stays unread and untouched", async () => {
+    installCopy("0.2.2");
+    const dir = store();
+    writeCache(dir, "9.9.9", Date.now() - 25 * 60 * 60 * 1000); // past the 24 h TTL: a read would force a fetch
+    const before = readFileSync(cacheFile(dir), "utf8");
+    const calls = stubFetch(() => Response.json({ version: "0.2.3" }));
+    const out = await (await statusTool({ store: { dir }, updateCheck: false })).execute({});
+    expect(calls.length).toBe(0); // a read would have found the entry stale and fetched
+    expect(out).not.toContain("version ");
+    expect(readFileSync(cacheFile(dir), "utf8")).toBe(before); // and never refreshed it
+  });
+
+  test("MAGPIE_ACP_UPDATE_CHECK wins over user options in both directions", async () => {
+    installCopy("0.2.2");
+
+    process.env.MAGPIE_ACP_UPDATE_CHECK = "0";
+    const off = stubFetch(() => Response.json({ version: "0.2.3" }));
+    const offOut = await (await statusTool()).execute({}); // no option: the default is on
+    expect(off.length).toBe(0);
+    expect(offOut).not.toContain("version ");
+
+    process.env.MAGPIE_ACP_UPDATE_CHECK = "1";
+    const on = stubFetch(() => Response.json({ version: "0.2.3" }));
+    const onOut = await (await statusTool({ updateCheck: false })).execute({}); // the option says off
+    expect(on.length).toBe(1);
+    expect(onOut.split("\n")[1]).toBe("version 0.2.2 · latest 0.2.3");
+  });
+});

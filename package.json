@@ -28,7 +28,8 @@
         "ttlDays": 30
       },
       "gatewayTimeoutMs": 3000,
-      "failOpen": true
+      "failOpen": true,
+      "updateCheck": true
     }
   },
   "scripts": {

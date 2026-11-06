@@ -131,7 +131,8 @@ function statusTool(cfg) {
         const done = cleanup(cfg.storeDir, { maxBytes: cfg.store.maxBytes, ttlDays: cfg.store.ttlDays });
         out.push(`回收:删了 ${num(done.removed)} 个块,释放 ${num(done.freed)} 字节,标记 ${num(done.evictedFolds)} 个 fold 为已淘汰。`);
       }
-      const line = await versionLine(process.cwd(), cfg.storeDir);
+      // Off skips the whole check: no line, no request, and the cache entry is never even read.
+      const line = cfg.updateCheck ? await versionLine(process.cwd(), cfg.storeDir) : null;
       if (line) out.splice(1, 0, line);
       return out.join("\n");
     },

@@ -31,6 +31,10 @@ export const DEFAULTS = {
   store: { dir: "~/.local/share/magpie-acp", maxBytes: 536870912, ttlDays: 30 },
   gatewayTimeoutMs: 3000,
   failOpen: true,
+  // updateCheck: the staleness hint in `acp_status` costs one unauthenticated GET a day. A user
+  // who wants nothing to leave the machine turns it off — and off means no line, no request,
+  // and no read of the cache entry either.
+  updateCheck: true,
   // debug: the fold decision of every request onto the host's stderr, plus the stack of
   // anything the hook swallowed. A hook never breaks a request, so this is the only way
   // to see why a compression the agent reported did not reach the wire.
@@ -78,6 +82,13 @@ export function loadConfig(options = {}) {
   cfg.origins = Array.isArray(cfg.origins) ? cfg.origins.map(String).filter(Boolean) : [];
   cfg.storeDir = resolveDir(cfg.store.dir);
   cfg.budgetMs = Math.max(200, Math.min(2000, Number(cfg.gatewayTimeoutMs) - 200));
+  // Tri-state: 1/true and 0/false win over user options in both directions; unset (or an
+  // unrecognized value) leaves what the options resolved to.
+  if (process.env.MAGPIE_ACP_UPDATE_CHECK !== undefined) {
+    const on = process.env.MAGPIE_ACP_UPDATE_CHECK.toLowerCase();
+    if (on === "1" || on === "true") cfg.updateCheck = true;
+    else if (on === "0" || on === "false") cfg.updateCheck = false;
+  }
   return cfg;
 }
 

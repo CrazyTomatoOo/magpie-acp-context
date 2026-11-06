@@ -158,8 +158,9 @@ declared tools count as ours, and whether this caller passed the gate; the secon
 staleness hint — `version 0.2.2 · latest 0.2.3` when the installed copy is behind the
 `magpie-plugin` moving pointer, `version 0.2.2 · local build` when it is ahead of anything
 published, `version 0.2.2` when it is current or a version on either side cannot be compared,
-and nothing at all when the one unauthenticated check (3 s abort) could not answer; then one
-line per session
+and nothing at all when the one unauthenticated check (3 s abort) could not answer.
+`updateCheck: false` removes the line, the request, and the read of the cached answer — nothing
+leaves the machine. Then one line per session
 with refs, folds, the growth since the last fold against the 50,000-token nudge line, and the
 billed prompt tokens the last reply reported. On disk, `<store.dir>/sessions/` gains one file per
 session and `<store.dir>/blocks/` one file per folded message.
@@ -170,7 +171,8 @@ a mixed setup does not fold at two rhythms.
 
 Options can also come from the environment, which is handy for tests:
 `MAGPIE_ACP_ENABLED=1`, `MAGPIE_ACP_MODE`, `MAGPIE_ACP_STORE`, `MAGPIE_ACP_INJECT_STYLE`,
-`MAGPIE_ACP_KEEP_TURNS`, `MAGPIE_ACP_MIN_BYTES`, `MAGPIE_ACP_GROWTH_FLOOR`, `MAGPIE_ACP_AGENTS`.
+`MAGPIE_ACP_KEEP_TURNS`, `MAGPIE_ACP_MIN_BYTES`, `MAGPIE_ACP_GROWTH_FLOOR`, `MAGPIE_ACP_AGENTS`,
+`MAGPIE_ACP_UPDATE_CHECK` (`1`/`true` on, `0`/`false` off — wins over the option both ways).
 
 `MAGPIE_ACP_DEBUG=1` (or `debug: true`) prints, to the host's stderr, the fold decision of every
 request — the foldable window, folds created, skipped ranges, ranges dropped as foreign — and the
@@ -192,6 +194,7 @@ on the wire.
 | `store.dir` | `~/.local/share/magpie-acp` | state + folded originals |
 | `store.maxBytes` / `store.ttlDays` | `536870912` / `30` | eviction budget, applied on `acp_status {evict:true}` |
 | `debug` | `false` | print each request's fold decision, and anything the hook swallowed, to the host's stderr (`MAGPIE_ACP_DEBUG=1`) |
+| `updateCheck` | `true` | the staleness hint in `acp_status`: one unauthenticated GET a day. `false` removes the line, the request, and the cache read (`MAGPIE_ACP_UPDATE_CHECK=0`) |
 
 ## What lives on disk
 

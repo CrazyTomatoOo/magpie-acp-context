@@ -52,6 +52,14 @@ describe("the switch is on by default", () => {
   });
 });
 
+describe("the update check is on by default", () => {
+  test("the manifest's updateCheck default agrees with the code", () => {
+    const manifest = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8"));
+    expect(manifest.magpie.options.updateCheck).toBe(loadConfig().updateCheck);
+    expect(loadConfig().updateCheck).toBe(true);
+  });
+});
+
 describe("tool gate", () => {
   const options = () => ({ keepRecentTurns: 1, minRangeBytes: 1000, store: { dir: store() } });
 
