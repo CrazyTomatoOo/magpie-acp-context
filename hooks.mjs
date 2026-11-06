@@ -159,7 +159,9 @@ export function liveRanges({ units, folds, window }) {
   for (const fold of folds) {
     const start = indexByBlock.get(fold.startBlock);
     const end = indexByBlock.get(fold.endBlock);
-    if (start === undefined || end === undefined || start >= end) continue;
+    // A one-unit range is a real range: models do compress a single message, and dropping
+    // `start === end` here silently ignored exactly that fold.
+    if (start === undefined || end === undefined || start > end) continue;
     if (window && (start < window.from || end > window.to)) continue;
     ranges.push({ start, end, fold });
   }
@@ -218,6 +220,7 @@ export async function onRequest(body, ctx) {
     for (let i = 0; i < units.length; i += 1) units[i].ref = refs[ids[i]];
 
     const { created, window, unresolved, foreign } = planFolds({ units, refs, session, cfg });
+    if (cfg.debug) console.error("[magpie-acp-context] plan", JSON.stringify({ window, created: created.length, unresolved, foreign, folds: session.folds().length }));
     if (created.length) {
       session.withLock(() => session.recordFolds(created, ({ blockId, role, text }) => session.storeOriginal(blockId, { role, text, ref: refs[blockId], at: Date.now() })));
     }
@@ -304,6 +307,8 @@ export async function onRequest(body, ctx) {
     if (JSON.stringify(next) === JSON.stringify(body)) return undefined;
     return next;
   } catch (err) {
+    // A gateway hook may never break the request, so this stays a log rather than a throw.
+    if (cfg?.debug) console.error("[magpie-acp-context] onRequest failed:", err);
     if (cfg?.failOpen !== false) return undefined;
     throw err;
   }
@@ -331,6 +336,7 @@ export async function onResponse(reply, ctx) {
       session.save();
     });
   } catch (err) {
+    if (cfg?.debug) console.error("[magpie-acp-context] onResponse failed:", err);
     if (cfg?.failOpen === false) throw err;
   }
 }

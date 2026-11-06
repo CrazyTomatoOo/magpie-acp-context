@@ -17,6 +17,26 @@ export const COMPRESS_TOOL_NAMES = new Set([
   "acp_compress",
 ]);
 
+/** The plugin's own name in package.json: magpie serves `<plugin>_<tool>`. */
+const OWN_PREFIX = "magpie-acp-context";
+
+/**
+ * magpie serves a plugin's tools as `<plugin>_<tool>`, and each client replays the name it
+ * called with ("magpie-acp-context_compress"), several wrapping it again with their own MCP
+ * prefix ("mcp__magpie__magpie-acp-context_compress"). Matching only the bare names missed
+ * every call a real client ever made. The prefix stays ours on purpose: another server's
+ * `foo_compress` is not a call the model made to this plugin.
+ */
+export function isCompressToolName(name) {
+  let full = String(name ?? "").toLowerCase().trim();
+  if (!full) return false;
+  const mcp = /^mcp__[a-z0-9_.-]+__(.+)$/.exec(full);
+  if (mcp) full = mcp[1];
+  if (COMPRESS_TOOL_NAMES.has(full)) return true;
+  if (!full.startsWith(`${OWN_PREFIX}_`)) return false;
+  return COMPRESS_TOOL_NAMES.has(full.slice(OWN_PREFIX.length + 1));
+}
+
 const FENCE = /^```[a-zA-Z]*\s*|\s*```$/g;
 
 function stripFences(s) {
@@ -103,7 +123,7 @@ export function compressCalls(units) {
   const calls = [];
   for (const unit of units) {
     for (const call of unit.toolCalls || []) {
-      if (!COMPRESS_TOOL_NAMES.has(String(call?.name || "").toLowerCase())) continue;
+      if (!isCompressToolName(call?.name)) continue;
       const entries = parseCompressPayload(call.input);
       if (entries.length) {
         calls.push({ unitIndex: unit.index, entries, acknowledged: acknowledges(units, unit.index) });

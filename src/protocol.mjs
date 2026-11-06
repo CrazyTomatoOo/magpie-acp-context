@@ -22,12 +22,14 @@ function blockText(block) {
       return asText(block.text);
     case "tool_use":
       return `tool_use ${block.name} ${JSON.stringify(block.input ?? {})}`;
+    // A real client hands the result back as an array of blocks, not one string -
+    // reading only the string shape made the ack invisible and the fold never landed.
     case "tool_result":
-      return `tool_result ${asText(block.content)}`;
+      return `tool_result ${partsText(block.content)}`;
     case "function_call":
       return `function_call ${block.name ?? ""} ${asText(block.arguments)}`;
     case "function_call_output":
-      return `function_call_output ${asText(block.output)}`;
+      return `function_call_output ${partsText(block.output)}`;
     case "image":
     case "input_image":
       return "[image]";

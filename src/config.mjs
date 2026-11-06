@@ -26,6 +26,10 @@ export const DEFAULTS = {
   store: { dir: "~/.local/share/magpie-acp", maxBytes: 536870912, ttlDays: 30 },
   gatewayTimeoutMs: 3000,
   failOpen: true,
+  // debug: the fold decision of every request onto the host's stderr, plus the stack of
+  // anything the hook swallowed. A hook never breaks a request, so this is the only way
+  // to see why a compression the agent reported did not reach the wire.
+  debug: false,
 };
 
 function isPlainObject(v) {
@@ -59,6 +63,7 @@ export function loadConfig(options = {}) {
       .filter(Boolean);
   }
   cfg.agents = Array.isArray(cfg.agents) ? cfg.agents.map(String).filter(Boolean) : [];
+  if (process.env.MAGPIE_ACP_DEBUG === "1") cfg.debug = true;
   if (process.env.MAGPIE_ACP_ORIGINS !== undefined) {
     cfg.origins = String(process.env.MAGPIE_ACP_ORIGINS)
       .split(",")

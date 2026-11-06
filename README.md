@@ -28,7 +28,9 @@ proxy rewrites bodies. That is the same split the community plugins
 1. Hash every message into a **blockId** (`sha256(role + "\0" + text)[0:16]`) and hand out a
    monotonic **ref** (`m00001`) per blockId — refs never renumber when history shifts.
 2. Find `compress` calls already present in the transcript, parse every legacy payload shape,
-   and record them as **folds** (`refs` + summary + topic).
+   and record them as **folds** (`refs` + summary + topic). The call is recognised under the
+   name the client replays — `compress`, the served `magpie-acp-context_compress`, or the MCP
+   wrapper a client adds around it (`mcp__magpie__magpie-acp-context_compress`).
 3. Replay live folds: the folded range is replaced by one marker message
    `[acp] m00002–m00005 <topic>\n<summary>`; a fold dies as soon as an anchor leaves the
    history (the client compacted) or the range re-enters the recent window.
@@ -117,6 +119,11 @@ Options can also come from the environment, which is handy for tests:
 `MAGPIE_ACP_ENABLED=1`, `MAGPIE_ACP_MODE`, `MAGPIE_ACP_STORE`, `MAGPIE_ACP_INJECT_STYLE`,
 `MAGPIE_ACP_KEEP_TURNS`, `MAGPIE_ACP_MIN_BYTES`, `MAGPIE_ACP_GROWTH_FLOOR`, `MAGPIE_ACP_AGENTS`.
 
+`MAGPIE_ACP_DEBUG=1` (or `debug: true`) prints, to the host's stderr, the fold decision of every
+request — the foldable window, folds created, skipped ranges, ranges dropped as foreign — and the
+stack of anything the hook swallowed. Use it when a compression the agent reported never showed up
+on the wire.
+
 | option | default | meaning |
 |---|---|---|
 | `enabled` | `false` | master switch |
@@ -131,6 +138,7 @@ Options can also come from the environment, which is handy for tests:
 | `nudge.growthFloor` | `50000` | growth (unfolded tail) since the last fold that triggers a nudge — the flat 50K billion-context uses for every window |
 | `store.dir` | `~/.local/share/magpie-acp` | state + folded originals |
 | `store.maxBytes` / `store.ttlDays` | `536870912` / `30` | eviction budget, applied on `acp_status {evict:true}` |
+| `debug` | `false` | print each request's fold decision, and anything the hook swallowed, to the host's stderr (`MAGPIE_ACP_DEBUG=1`) |
 
 ## What lives on disk
 

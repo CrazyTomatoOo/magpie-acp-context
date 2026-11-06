@@ -431,3 +431,63 @@ describe("session identity", () => {
   });
 });
 
+describe("folds a real client actually sends", () => {
+  test("a one-message range folds instead of being dropped", async () => {
+    const options = opts();
+    const body = {
+      model: "x",
+      messages: [
+        { role: "user", content: "读一下。" },
+        { role: "assistant", content: filler(6000) },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{ id: "c1", type: "function", function: { name: "magpie-acp-context_compress", arguments: JSON.stringify({ content: "m00002–m00002 早期需求\n用户发来一段填充文本。" }) } }],
+        },
+        { role: "tool", tool_call_id: "c1", content: `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。` },
+        { role: "user", content: "继续" },
+      ],
+    };
+    const out = await onRequest(structuredClone(body), ctxOf(options));
+    expect(out.messages[1].content.startsWith("[acp] m00002–m00002 早期需求")).toBe(true);
+    expect(out.messages[1].content).toContain("用户发来一段填充文本");
+    expect(JSON.stringify(out.messages)).not.toContain(filler(6000));
+  });
+
+  test("a tool_result handed back as blocks still reads as acknowledged", async () => {
+    const options = opts();
+    const body = {
+      model: "claude-x",
+      system: [{ type: "text", text: "you are terse" }],
+      messages: [
+        { role: "user", content: [{ type: "text", text: filler(6000) }] },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "收到。" },
+            { type: "tool_use", id: "call_1", name: "mcp__magpie__magpie-acp-context_compress", input: { content: "m00001–m00001 第一轮\n一段填充文本。" } },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "call_1",
+              content: [
+                { type: "text", text: `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。` },
+                { type: "text", text: "<system-reminder>\n<total_tokens>1 tokens left</total_tokens>\n</system-reminder>" },
+              ],
+            },
+          ],
+        },
+        { role: "assistant", content: [{ type: "text", text: "No response requested." }] },
+        { role: "user", content: [{ type: "text", text: "继续" }] },
+      ],
+    };
+    const out = await onRequest(structuredClone(body), ctxOf(options, { protocol: "anthropic" }));
+    expect(out.messages[0].content[0].text.startsWith("[acp] m00001–m00001 第一轮")).toBe(true);
+    expect(JSON.stringify(out.messages)).not.toContain(filler(6000));
+  });
+});
+
