@@ -313,3 +313,168 @@ describe("acp_status version check cache", () => {
     expect(existsSync(cacheFile(dir))).toBe(true);
   });
 });
+
+describe("acp_status version check failure backoff", () => {
+  const realFetch = globalThis.fetch;
+  const realCwd = process.cwd();
+  const realDebug = process.env.MAGPIE_ACP_DEBUG;
+  const realError = console.error;
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    process.chdir(realCwd);
+    if (realDebug === undefined) delete process.env.MAGPIE_ACP_DEBUG;
+    else process.env.MAGPIE_ACP_DEBUG = realDebug;
+    console.error = realError;
+  });
+
+  const statusTool = async (dir) => (await acpTools(undefined, { store: { dir } })).tool.acp_status;
+
+  const stubFetch = (respond) => {
+    const calls = [];
+    globalThis.fetch = (input, init) => {
+      calls.push({ input: String(input), init });
+      return respond();
+    };
+    return calls;
+  };
+
+  const installCopy = (version) => {
+    const cwd = mkdtempSync(join(tmpdir(), "acp-version-"));
+    const dir = join(cwd, "plugins", "node_modules", "magpie-acp-context");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "magpie-acp-context", version }));
+    process.chdir(cwd);
+    return cwd;
+  };
+
+  const cacheFile = (dir) => join(dir, "version-check.json");
+
+  const writeFailure = (dir, failedAt) => writeFileSync(cacheFile(dir), JSON.stringify({ failedAt }));
+
+  test("a failed check leaves the line absent with no error text, and records the failure in the cache file", async () => {
+    installCopy("0.2.2");
+    const dir = store();
+    const calls = stubFetch(() => Promise.reject(new Error("network down")));
+    const out = await (await statusTool(dir)).execute({});
+    expect(calls.length).toBe(1);
+    expect(out).not.toContain("version ");
+    expect(out).not.toContain("latest");
+    expect(out).not.toContain("local build");
+    expect(out).not.toMatch(/error|fail|network|HTTP/i);
+    const entry = JSON.parse(readFileSync(cacheFile(dir), "utf8"));
+    expect(Number.isFinite(entry.failedAt)).toBe(true);
+    expect(entry.failedAt).toBeGreaterThan(Date.now() - 60000);
+    expect(entry.latest).toBeUndefined();
+  });
+
+  test("a second call within 6 hours of a failure performs no fetch and stays absent", async () => {
+    installCopy("0.2.2");
+    const dir = store();
+    const calls = stubFetch(() => Promise.reject(new Error("network down")));
+    await (await statusTool(dir)).execute({});
+    expect(calls.length).toBe(1);
+    const out = await (await statusTool(dir)).execute({});
+    expect(calls.length).toBe(1);
+    expect(out).not.toContain("version ");
+    expect(out).not.toContain("latest");
+  });
+
+  test("once the failure record is past 6 hours old, exactly one attempt is made again", async () => {
+    installCopy("0.2.2");
+    const dir = store();
+    writeFailure(dir, Date.now() - 6 * 60 * 60 * 1000 - 60 * 1000);
+    const calls = stubFetch(() => Response.json({ version: "0.2.3" }));
+    const out = await (await statusTool(dir)).execute({});
+    expect(calls.length).toBe(1);
+    expect(out.split("\n")[1]).toBe("version 0.2.2 · latest 0.2.3");
+  });
+
+  test("a success after a failure replaces the failure record and restores the 24-hour lifetime", async () => {
+    installCopy("0.2.2");
+    const dir = store();
+    writeFailure(dir, Date.now() - 7 * 60 * 60 * 1000);
+    const calls = stubFetch(() => Response.json({ version: "0.2.3" }));
+    const first = await (await statusTool(dir)).execute({});
+    expect(calls.length).toBe(1);
+    expect(first.split("\n")[1]).toBe("version 0.2.2 · latest 0.2.3");
+    const entry = JSON.parse(readFileSync(cacheFile(dir), "utf8"));
+    expect(entry.latest).toBe("0.2.3");
+    expect(entry.failedAt).toBeUndefined();
+    expect(entry.at).toBeGreaterThan(Date.now() - 60000);
+    const second = await (await statusTool(dir)).execute({});
+    expect(calls.length).toBe(1);
+    expect(second).toBe(first);
+  });
+
+  test("still failing after the 6 hours stays absent and pushes the next attempt out again", async () => {
+    installCopy("0.2.2");
+    const dir = store();
+    const sevenHoursAgo = Date.now() - 7 * 60 * 60 * 1000;
+    writeFailure(dir, sevenHoursAgo);
+    const calls = stubFetch(() => Promise.reject(new Error("still down")));
+    const out = await (await statusTool(dir)).execute({});
+    expect(calls.length).toBe(1);
+    expect(out).not.toContain("version ");
+    const entry = JSON.parse(readFileSync(cacheFile(dir), "utf8"));
+    expect(entry.failedAt).toBeGreaterThan(sevenHoursAgo);
+    const again = await (await statusTool(dir)).execute({});
+    expect(calls.length).toBe(1);
+    expect(again).not.toContain("version ");
+  });
+
+  test("every way a check can fail — rejection, non-2xx, unparsable body, version-less body — records the same backoff", async () => {
+    installCopy("0.2.2");
+    const modes = [
+      () => Promise.reject(new Error("offline")),
+      () => new Response("nope", { status: 503 }),
+      () => new Response("not json at all", { status: 200 }),
+      () => Response.json({ no: "version here" }),
+    ];
+    for (const respond of modes) {
+      const dir = store();
+      const calls = stubFetch(respond);
+      const out = await (await statusTool(dir)).execute({});
+      expect(calls.length).toBe(1);
+      expect(out).not.toContain("version ");
+      const entry = JSON.parse(readFileSync(cacheFile(dir), "utf8"));
+      expect(entry.failedAt).toBeGreaterThan(Date.now() - 60000);
+      const second = await (await statusTool(dir)).execute({});
+      expect(calls.length).toBe(1);
+      expect(second).not.toContain("version ");
+    }
+  });
+
+  test("a fetch that never resolves does not hang the tool past the 3-second budget", async () => {
+    installCopy("0.2.2");
+    const dir = store();
+    stubFetch(() => new Promise(() => {}));
+    const start = Date.now();
+    const out = await (await statusTool(dir)).execute({});
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeGreaterThanOrEqual(2950);
+    expect(elapsed).toBeLessThan(3500);
+    expect(out).not.toContain("version ");
+    const entry = JSON.parse(readFileSync(cacheFile(dir), "utf8"));
+    expect(Number.isFinite(entry.failedAt)).toBe(true);
+  });
+
+  test("a failure reaches the host's stderr at debug level only — never the tool result, never normal level", async () => {
+    installCopy("0.2.2");
+    const errors = [];
+    console.error = (...args) => errors.push(args);
+    const dir = store();
+    const calls = stubFetch(() => Promise.reject(new Error("offline")));
+    const out = await (await statusTool(dir)).execute({});
+    expect(out).not.toMatch(/offline|version check/i);
+    expect(errors.length).toBe(0);
+    process.env.MAGPIE_ACP_DEBUG = "1";
+    stubFetch(() => Promise.reject(new Error("offline")));
+    const debugOut = await (await statusTool(store())).execute({});
+    expect(calls.length).toBe(1);
+    expect(errors.length).toBe(1);
+    expect(errors[0].join(" ")).toContain("[magpie-acp-context] version check failed");
+    expect(errors[0].join(" ")).toContain("offline");
+    expect(debugOut).not.toMatch(/offline|version check/i);
+  });
+});
