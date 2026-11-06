@@ -54,14 +54,14 @@ to every agent at `/mcp/magpie/tools`:
 | `<short>_compress` | parses the payload into ranges and tells the model what it wrote; the fold itself is settled by the hook on the next request |
 | `<short>_decompress` | returns the original text of a folded block, by block id or by the ref it was shown under |
 | `<short>_search_context` | substring + term-frequency search over folded originals |
-| `<short>_acp_status` | store size, one line per session (refs, folds, current tokens vs the declared window, billed prompt tokens, last nudge); `{evict:true}` runs eviction |
+| `<short>_acp_status` | store size, one line per session (refs, folds, growth since the last fold against the nudge line, billed prompt tokens, last nudge); `{evict:true}` runs eviction |
 
 `<short>` is the plugin's short name — the folder name it was added from, capped at 24
 characters. Install it as `magpie-acp-context` to get `magpie-acp-context_decompress`.
 
 Tools run in the plugin host with Bun's full runtime (55 s cap), which is the half of ACP the
-hook cannot do: the hook has no filesystem, no network and 250 ms, and cannot inject a tool
-result into the stream. The client executes the tool; the result becomes an ordinary tool
+hook cannot do: the hook sees one request and one reply under a 1 s default budget, and nothing
+it returns can inject a tool result into the stream. The client executes the tool; the result becomes an ordinary tool
 message; the hook reads that message on the next turn and settles the fold.
 
 ## Operator CLI
@@ -71,7 +71,7 @@ directly, so it works when magpie is not running:
 
 | command | what it does |
 |---|---|
-| `status [--limit N] [--window N] [--json]` | the same lines `acp_status` prints for the agent |
+| `status [--limit N] [--growth-floor N] [--json]` | the same lines `acp_status` prints for the agent |
 | `block <id\|ref>` | the original text of one folded block |
 | `forget <id\|ref>... [--yes]` | delete originals on purpose; dependent folds become holes, not lies |
 | `unlock [session]` | remove a `*.lock` a killed hook left behind (hooks only wait 120 ms) |
@@ -95,6 +95,23 @@ tools (`<short>_compress`, …).
 Hooks are loaded at gateway start: after `plugin add`, `plugin update` or an option change the
 plugin code itself only takes effect once magpie restarts. Options read from the environment or
 from `magpie plugin options` do not need a restart.
+
+### Is it working?
+
+`enabled` ships `false`; nothing happens until you turn it on and restart the gateway. After that:
+
+```sh
+magpie plugin --json | grep loaded        # "loaded": null means the hooks loaded
+```
+
+In a session, ask the agent for `<short>_acp_status`: it prints one line per session with refs,
+folds, the growth since the last fold against the 50,000-token nudge line, and the billed prompt
+tokens the last reply reported. On disk, `<store.dir>/sessions/` gains one file per session and
+`<store.dir>/blocks/` one file per folded message.
+
+The nudge is the visible half: once a session has grown 50,000 tokens since its last fold, the
+next request carries a note asking the model to fold — the same cadence billion-context uses, so
+a mixed setup does not fold at two rhythms.
 
 Options can also come from the environment, which is handy for tests:
 `MAGPIE_ACP_ENABLED=1`, `MAGPIE_ACP_MODE`, `MAGPIE_ACP_STORE`, `MAGPIE_ACP_INJECT_STYLE`,
@@ -177,10 +194,10 @@ facts and the measured run.
 ## Tests
 
 ```sh
-bun test test/                       # 72 unit tests: refs, folds, protocols, safety rules,
+bun test test/                       # 78 unit tests: refs, folds, protocols, safety rules,
                                      # tools, usage shapes, nudge rules, eviction,
                                      # compaction, reconcile, CLI, inherited sessions
-./test/e2e/run.sh                    # container end-to-end: 6.1 KB request → 632 B on the wire,
+./test/e2e/run.sh                    # container end-to-end: 6,933 B request → 1,269 B on the wire,
                                      # a nudge on the wire, all four tools over MCP,
                                      # the billed prompt tokens landing in acp_status,
                                      # streamed usage reaching the ledger too,
@@ -192,7 +209,7 @@ bun test test/                       # 72 unit tests: refs, folds, protocols, sa
 `--read-only`, `:ro` mounts and one output directory — nothing on the host is written. It
 asserts on the body the fake upstream actually received, not on a CLI success message.
 
-## Known limits (M2)
+## Known limits
 
 - Only prose can carry a ref; tool results and JSON arguments cannot, so `m00003` may be
   skipped. Refs are display handles, never addresses — folds are keyed by blockId.

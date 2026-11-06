@@ -71,7 +71,7 @@ function usage() {
     [
       "usage: magpie-acp <command> [options]",
       "",
-      "  status      [--limit N] [--window N] [--json]",
+      "  status      [--limit N] [--growth-floor N] [--json]",
       "  sessions    [--json]",
       "  block       <id|ref> [--json]",
       "  forget      <id|ref>... [--yes]",
