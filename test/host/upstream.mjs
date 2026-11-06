@@ -19,12 +19,6 @@ Bun.serve({
     } catch {
       // not JSON: recorded as-is, answered as a non-streaming completion
     }
-    let parsed = null;
-    try {
-      parsed = body ? JSON.parse(body) : null;
-    } catch {
-      // not JSON: recorded as-is, answered as a non-streaming completion
-    }
     const seq = String(++n).padStart(3, "0");
     writeFileSync(`${OUT}/${seq}.path`, `${req.method} ${url.pathname}`);
     writeFileSync(`${OUT}/${seq}.headers`, JSON.stringify(Object.fromEntries(req.headers)));
@@ -46,19 +40,6 @@ Bun.serve({
     if (parsed?.stream === true) {
       const chunk = (delta, extra = {}) =>
         `data: ${JSON.stringify({ id: "chatcmpl_fake", object: "chat.completion.chunk", model: "fake-1", choices: delta, ...extra })}\n\n`;
-      const sse = [
-        chunk([{ index: 0, delta: { role: "assistant", content: "ok" } }]),
-        chunk([], { usage: { prompt_tokens: 2222, completion_tokens: 3, total_tokens: 2225 } }),
-        "data: [DONE]\n\n",
-      ].join("");
-      return new Response(sse, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache" } });
-    }
-
-    // A streamed reply: the usage arrives in a final chunk with an empty `choices`, the way
-    // OpenAI-compatible providers report it. The gateway consolidates the copy for onResponse.
-    if (parsed?.stream === true) {
-      const chunk = (choices, extra = {}) =>
-        `data: ${JSON.stringify({ id: "chatcmpl_fake", object: "chat.completion.chunk", model: "fake-1", choices, ...extra })}\n\n`;
       const sse = [
         chunk([{ index: 0, delta: { role: "assistant", content: "ok" } }]),
         chunk([], { usage: { prompt_tokens: 2222, completion_tokens: 3, total_tokens: 2225 } }),

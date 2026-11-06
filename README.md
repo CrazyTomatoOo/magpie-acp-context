@@ -83,14 +83,22 @@ directly, so it works when magpie is not running:
 ## Install
 
 ```sh
-magpie plugin add ./            # this directory
+magpie plugin add github:CrazyTomatooOo/magpie-acp-context   # the published path
+magpie plugin add ./                                        # or a checkout, for development
 magpie plugin options magpie-acp-context '{"enabled":true,"keepRecentTurns":3}'
 ```
 
+The repository must carry the `magpie-plugin` tag. The plugin's short name is its folder name
+capped at 24 characters, so install it as `magpie-acp-context`: any shorter name renames the
+tools (`<short>_compress`, …).
+
+Hooks are loaded at gateway start: after `plugin add`, `plugin update` or an option change the
+plugin code itself only takes effect once magpie restarts. Options read from the environment or
+from `magpie plugin options` do not need a restart.
+
 Options can also come from the environment, which is handy for tests:
 `MAGPIE_ACP_ENABLED=1`, `MAGPIE_ACP_MODE`, `MAGPIE_ACP_STORE`, `MAGPIE_ACP_INJECT_STYLE`,
-`MAGPIE_ACP_KEEP_TURNS`, `MAGPIE_ACP_MIN_BYTES`, `MAGPIE_ACP_WINDOW`, `MAGPIE_ACP_MIN_PCT`,
-`MAGPIE_ACP_EMERGENCY_PCT`, `MAGPIE_ACP_GROWTH_FLOOR`, `MAGPIE_ACP_AGENTS`.
+`MAGPIE_ACP_KEEP_TURNS`, `MAGPIE_ACP_MIN_BYTES`, `MAGPIE_ACP_GROWTH_FLOOR`, `MAGPIE_ACP_AGENTS`.
 
 | option | default | meaning |
 |---|---|---|
@@ -98,7 +106,7 @@ Options can also come from the environment, which is handy for tests:
 | `agents` | `[]` | canary list: empty = every agent, otherwise only the named ones start the hook |
 | `origins` | `["local","magpie-key"]` | callers served at all: magpie's own `local`/`magpie-key`; `gateway-key`, `remote` and an unknown origin are skipped |
 | `mode` | `assist` | `assist` folds and nudges; `render` only renders existing folds |
-| `injectStyle` | `append-user` | `append-user` or `append-system` |
+| `injectStyle` | `append-user` | `append-user` or `system-suffix` |
 | `refFormat` | `m%05d` | printf format for refs |
 | `minRangeBytes` | `5000` | smallest range worth folding |
 | `maxSummaryChars` | `20000` | summaries are truncated, never rejected |

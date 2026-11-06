@@ -37,9 +37,9 @@ grep -q '/opt/magpie-acp-context' "$OUT/plugin.json" || { say "FAIL plugin not r
 grep -q '"loaded": *null' "$OUT/plugin.json" && { say "FAIL hooks did not load"; sed 's/^/    /' "$OUT/plugin.json"; exit 1; }
 say "plugin registered"
 
-# A window small enough that the nudge fires on the very first request, and a low floor so
-# the test does not have to grow the history first. Both are read by the hook's loadConfig.
-export MAGPIE_ACP_WINDOW=1000 MAGPIE_ACP_MIN_PCT=0.1 MAGPIE_ACP_GROWTH_FLOOR=1
+# A floor low enough that the nudge fires on the very first request, so the test does not
+# have to grow the history first. Read by the hook's loadConfig.
+export MAGPIE_ACP_GROWTH_FLOOR=1
 
 magpie web --gateway --no-open >"$OUT/gateway.log" 2>&1 &
 i=0
@@ -144,7 +144,7 @@ sed 's/^/[e2e] /' "$OUT/mcp-after-restart.log"
 grep -q '填充文本' "$OUT/restart/mcp.json" || { say "FAIL restart lost the original"; exit 1; }
 say "survived a restart"
 # M2: the reply's own usage reaches the ledger, and acp_status reports it.
-grep -q '上下文已用到' "$OUT/capture/"*.body || { say "FAIL no nudge reached the provider"; exit 1; }
+grep -q '上下文自上次折叠后增长了' "$OUT/capture/"*.body || { say "FAIL no nudge reached the provider"; exit 1; }
 say "nudge reached the provider"
 
 "$BUN" /work/mcp.mjs "http://127.0.0.1:$GW_PORT" magpie-acp-context_acp_status '{}' >"$OUT/status.log" 2>&1 || true
@@ -155,21 +155,13 @@ grep -q '计费 prompt=1,234 tok' "$OUT/status/mcp.json" || { say "FAIL onRespon
 say "usage recorded from the reply"
 
 # M3: a *streamed* reply's usage must reach the ledger too, not just a whole-body reply.
-"$BUN" /work/request.mjs --stream >"$OUT/stream.json"
-"$BUN" /work/post.mjs "$GW_URL/v1/chat/completions" "$OUT/stream.json" >"$OUT/stream.resp" 2>&1 || true
-grep -q '2225\|2222' "$OUT/capture/"*.body || say "note: upstream did not see a stream request"
+"$BUN" /work/request.mjs --stream >/tmp/req.json
+cp /tmp/req.json "$OUT/stream.json"
+mkdir -p "$OUT/stream-post"
+"$BUN" /work/post.mjs "http://127.0.0.1:$GW_PORT/v1/chat/completions" "$OUT/stream-post" >"$OUT/stream.resp" 2>&1 || true
+grep -qF '"stream":true' "$OUT/capture/004.body" || say "note: upstream did not see a stream request"
 
 rm -rf "$OUT/stream"
-OUT="$OUT/stream" "$BUN" /work/mcp.mjs "http://127.0.0.1:$GW_PORT" magpie-acp-context_acp_status '{}' >>"$OUT/stream.log" 2>&1 || true
-grep -q '计费 prompt=2,222 tok' "$OUT/stream/mcp.json" || { say "FAIL streamed usage never reached the ledger"; sed 's/^/    /' "$OUT/stream.log"; exit 1; }
-say "streamed usage recorded"
-
-# M3: a *streamed* reply's usage must reach the ledger too, not just a whole-body reply.
-"$BUN" /work/request.mjs --stream >/tmp/req.json
-mkdir -p "$OUT/stream-post"
-"$BUN" /work/post.mjs "http://127.0.0.1:$GW_PORT/v1/chat/completions" "$OUT/stream-post" >"$OUT/stream-post.log" 2>&1 || true
-grep -l '"stream":true' "$OUT"/capture/*.body >/dev/null 2>&1 || say "note: no streamed request reached upstream"
-
 OUT="$OUT/stream" "$BUN" /work/mcp.mjs "http://127.0.0.1:$GW_PORT" magpie-acp-context_acp_status '{}' >>"$OUT/stream.log" 2>&1 || true
 grep -q '计费 prompt=2,222 tok' "$OUT/stream/mcp.json" || { say "FAIL streamed usage never reached the ledger"; sed 's/^/    /' "$OUT/stream.log"; exit 1; }
 say "streamed usage recorded"

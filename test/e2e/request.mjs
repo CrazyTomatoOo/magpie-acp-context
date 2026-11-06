@@ -30,11 +30,10 @@ const body = {
         },
       ],
     },
-    { role: "tool", tool_call_id: "call_2", content: '{"ok":true}' },
+    { role: "tool", tool_call_id: "call_2", content: "解析到 1 段;折叠会在下一次请求时按历史里真实的 ref 结算(本工具不写历史)。" },
     { role: "user", content: "继续" },
   ],
 };
 
-if (process.argv.includes("--stream")) body.stream = true;
 if (process.argv.includes("--stream")) body.stream = true;
 console.log(JSON.stringify(body));
