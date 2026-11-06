@@ -12,6 +12,7 @@ import { COMPRESS_ACK, parseCompressPayload } from "./src/compress.mjs";
 import { findBlock, listBlocks, searchBlocks } from "./src/blocks.mjs";
 import { cleanup } from "./src/store.mjs";
 import { renderStatus, scanStore } from "./src/maintenance.mjs";
+import { versionLine } from "./src/version.mjs";
 
 const COMPRESS_ARGS = {
   type: "object",
@@ -110,7 +111,7 @@ function statusTool(cfg) {
   return {
     description: "看一眼上下文用量:每轮被计费的 prompt tokens、折叠数、nudge 状态、store 体积。",
     args: STATUS_ARGS,
-    execute(args) {
+    async execute(args) {
       const scan = scanStore(cfg.storeDir);
       const wanted = args?.session ? scan.sessions.filter((s) => s.key === args.session) : [];
       const shown = wanted.length ? wanted : scan.sessions;
@@ -130,6 +131,8 @@ function statusTool(cfg) {
         const done = cleanup(cfg.storeDir, { maxBytes: cfg.store.maxBytes, ttlDays: cfg.store.ttlDays });
         out.push(`回收:删了 ${num(done.removed)} 个块,释放 ${num(done.freed)} 字节,标记 ${num(done.evictedFolds)} 个 fold 为已淘汰。`);
       }
+      const line = await versionLine();
+      if (line) out.splice(1, 0, line);
       return out.join("\n");
     },
   };

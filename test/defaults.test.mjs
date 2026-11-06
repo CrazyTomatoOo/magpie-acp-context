@@ -120,14 +120,21 @@ describe("tool gate", () => {
 
 describe("acp_status says which switch is on", () => {
   test("on by default, and the off state explains how to turn it back on", async () => {
-    const dir = store();
-    const on = await acpTools(undefined, { store: { dir } });
-    expect(on.tool.acp_status.execute({}).split("\n")[0]).toContain("开关:开");
-    expect(on.tool.acp_status.execute({}).split("\n")[0]).toContain("工具门");
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = () => Promise.reject(new Error("no network in tests"));
+    try {
+      const dir = store();
+      const on = await acpTools(undefined, { store: { dir } });
+      const onOut = await on.tool.acp_status.execute({});
+      expect(onOut.split("\n")[0]).toContain("开关:开");
+      expect(onOut.split("\n")[0]).toContain("工具门");
 
-    const off = await acpTools(undefined, { enabled: false, store: { dir } });
-    const lines = off.tool.acp_status.execute({}).split("\n");
-    expect(lines[0]).toContain("开关:关");
-    expect(lines.join("\n")).toContain('"enabled":true');
+      const off = await acpTools(undefined, { enabled: false, store: { dir } });
+      const lines = (await off.tool.acp_status.execute({})).split("\n");
+      expect(lines[0]).toContain("开关:关");
+      expect(lines.join("\n")).toContain('"enabled":true');
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });

@@ -173,19 +173,25 @@ describe("eviction", () => {
 
 describe("acp_status", () => {
   test("reports the store, the session and the billed tokens", async () => {
-    const dir = store();
-    const options = { enabled: true, store: { dir } };
-    await onRequest(structuredClone(chat(2)), {
-      protocol: "chat",
-      origin: "local", session: "s9", options });
-    await onResponse({ usage: { prompt_tokens: 1234, completion_tokens: 5 } }, {
-      protocol: "chat",
-      origin: "local", session: "s9", options });
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = () => Promise.reject(new Error("no network in tests"));
+    try {
+      const dir = store();
+      const options = { enabled: true, store: { dir } };
+      await onRequest(structuredClone(chat(2)), {
+        protocol: "chat",
+        origin: "local", session: "s9", options });
+      await onResponse({ usage: { prompt_tokens: 1234, completion_tokens: 5 } }, {
+        protocol: "chat",
+        origin: "local", session: "s9", options });
 
-    const tool = (await acpTools({ directory: "/tmp" }, options)).tool.acp_status;
-    const out = await tool.execute({ session: "s9" });
-    expect(out).toContain("s9");
-    expect(out).toContain("计费 prompt=1,234 tok");
-    expect(out).toContain("折叠提醒线 = 增长 50,000 tokens");
+      const tool = (await acpTools({ directory: "/tmp" }, options)).tool.acp_status;
+      const out = await tool.execute({ session: "s9" });
+      expect(out).toContain("s9");
+      expect(out).toContain("计费 prompt=1,234 tok");
+      expect(out).toContain("折叠提醒线 = 增长 50,000 tokens");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });

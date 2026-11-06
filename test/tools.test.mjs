@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, afterEach } from "bun:test";
 import { COMPRESS_ACK } from "../src/compress.mjs";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import acpTools from "../tools.mjs";
@@ -91,5 +91,86 @@ describe("tools", () => {
     expect(out).toContain("postgres://localhost:5432/app");
     expect(out).toContain("score=");
     expect(await tool.execute({ query: "完全不存在的东西" })).toContain("没有命中");
+  });
+});
+
+const PUBLISHED_URL = "https://raw.githubusercontent.com/CrazyTomatooOo/magpie-acp-context/magpie-plugin/package.json";
+
+describe("acp_status version line", () => {
+  const realFetch = globalThis.fetch;
+  const realCwd = process.cwd();
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    process.chdir(realCwd);
+  });
+
+  const statusTool = async () => (await acpTools(undefined, { store: { dir: store() } })).tool.acp_status;
+
+  const stubFetch = (respond) => {
+    const calls = [];
+    globalThis.fetch = (input, init) => {
+      calls.push({ input: String(input), init });
+      return respond();
+    };
+    return calls;
+  };
+
+  const installCopy = (version) => {
+    const cwd = mkdtempSync(join(tmpdir(), "acp-version-"));
+    const dir = join(cwd, "plugins", "node_modules", "magpie-acp-context");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "magpie-acp-context", version }));
+    process.chdir(cwd);
+    return cwd;
+  };
+
+  test("prints own · latest when the installed copy is behind, one fetch at the moving pointer", async () => {
+    installCopy("0.2.2");
+    const calls = stubFetch(() => Response.json({ version: "0.2.3" }));
+    const out = await (await statusTool()).execute({});
+    expect(out.split("\n")[1]).toBe("version 0.2.2 · latest 0.2.3");
+    expect(calls.length).toBe(1);
+    expect(calls[0].input).toBe(PUBLISHED_URL);
+    expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  test("names only the running version when current", async () => {
+    installCopy("0.2.3");
+    const calls = stubFetch(() => Response.json({ version: "0.2.3" }));
+    const out = await (await statusTool()).execute({});
+    expect(out.split("\n")[1]).toBe("version 0.2.3");
+    expect(out).not.toContain("latest");
+    expect(calls.length).toBe(1);
+  });
+
+  test("no version line and no error text when the fetch rejects, answers non-2xx, or answers unparsable JSON", async () => {
+    installCopy("0.2.2");
+    const failures = [
+      () => Promise.reject(new Error("offline")),
+      () => new Response("nope", { status: 500 }),
+      () => new Response("{oops", { status: 200 }),
+    ];
+    for (const respond of failures) {
+      stubFetch(respond);
+      const out = await (await statusTool()).execute({});
+      expect(out).not.toContain("version ");
+      expect(out).not.toContain("latest");
+    }
+  });
+
+  test("prefers the installed copy's manifest over the checkout's own", async () => {
+    installCopy("0.1.0");
+    stubFetch(() => Response.json({ version: "9.9.9" }));
+    const out = await (await statusTool()).execute({});
+    expect(out.split("\n")[1]).toBe("version 0.1.0 · latest 9.9.9");
+  });
+
+  test("falls back to the package's own manifest when no installed copy exists", async () => {
+    process.chdir(mkdtempSync(join(tmpdir(), "acp-version-")));
+    stubFetch(() => Response.json({ version: "9.9.9" }));
+    const out = await (await statusTool()).execute({});
+    const own = JSON.parse(readFileSync(join(realCwd, "package.json"), "utf8")).version;
+    expect(out.split("\n")[1]).toBe(`version ${own} · latest 9.9.9`);
   });
 });
