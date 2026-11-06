@@ -38,5 +38,15 @@
   },
   "bin": {
     "magpie-acp": "./cli.mjs"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CrazyTomatooOo/magpie-acp-context.git"
+  },
+  "keywords": [
+    "magpie",
+    "magpie-plugin",
+    "context-compression",
+    "acp"
+  ]
 }
