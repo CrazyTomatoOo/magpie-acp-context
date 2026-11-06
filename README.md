@@ -156,8 +156,10 @@ magpie plugin --json | grep loaded        # "loaded": null means the hooks loade
 In a session, ask the agent for `<short>_acp_status`: its first line names the switch, which
 declared tools count as ours, and whether this caller passed the gate; the second line is a
 staleness hint — `version 0.2.2 · latest 0.2.3` when the installed copy is behind the
-`magpie-plugin` moving pointer, `version 0.2.2` when it is current, and nothing at all when the
-one unauthenticated check (3 s abort) could not answer; then one line per session
+`magpie-plugin` moving pointer, `version 0.2.2 · local build` when it is ahead of anything
+published, `version 0.2.2` when it is current or a version on either side cannot be compared,
+and nothing at all when the one unauthenticated check (3 s abort) could not answer; then one
+line per session
 with refs, folds, the growth since the last fold against the 50,000-token nudge line, and the
 billed prompt tokens the last reply reported. On disk, `<store.dir>/sessions/` gains one file per
 session and `<store.dir>/blocks/` one file per folded message.
