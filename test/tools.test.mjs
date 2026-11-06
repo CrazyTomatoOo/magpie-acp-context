@@ -1,6 +1,6 @@
 import { describe, expect, test, afterEach } from "bun:test";
 import { COMPRESS_ACK } from "../src/compress.mjs";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import acpTools from "../tools.mjs";
@@ -172,5 +172,144 @@ describe("acp_status version line", () => {
     const out = await (await statusTool()).execute({});
     const own = JSON.parse(readFileSync(join(realCwd, "package.json"), "utf8")).version;
     expect(out.split("\n")[1]).toBe(`version ${own} · latest 9.9.9`);
+  });
+});
+
+describe("acp_status version check cache", () => {
+  const realFetch = globalThis.fetch;
+  const realCwd = process.cwd();
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    process.chdir(realCwd);
+  });
+
+  const statusTool = async (dir, store = {}) => (await acpTools(undefined, { store: { dir, ...store } })).tool.acp_status;
+
+  const stubFetch = (respond) => {
+    const calls = [];
+    globalThis.fetch = (input, init) => {
+      calls.push({ input: String(input), init });
+      return respond();
+    };
+    return calls;
+  };
+
+  const installCopy = (version) => {
+    const cwd = mkdtempSync(join(tmpdir(), "acp-version-"));
+    const dir = join(cwd, "plugins", "node_modules", "magpie-acp-context");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "magpie-acp-context", version }));
+    process.chdir(cwd);
+    return cwd;
+  };
+
+  const cacheFile = (dir) => join(dir, "version-check.json");
+
+  const writeCache = (dir, latest, at) => writeFileSync(cacheFile(dir), JSON.stringify({ latest, at }));
+
+  test("cold store: exactly one fetch, cache entry written; an untouched second call fetches nothing and prints the same line", async () => {
+    installCopy("0.2.2");
+    const calls = stubFetch(() => Response.json({ version: "0.2.3" }));
+    const dir = store();
+    const tool = await statusTool(dir);
+    const first = await tool.execute({});
+    expect(calls.length).toBe(1);
+    expect(first.split("\n")[1]).toBe("version 0.2.2 · latest 0.2.3");
+    const entry = JSON.parse(readFileSync(cacheFile(dir), "utf8"));
+    expect(entry.latest).toBe("0.2.3");
+    expect(entry.at).toBeGreaterThan(Date.now() - 60000);
+    const second = await tool.execute({});
+    expect(calls.length).toBe(1);
+    expect(second).toBe(first);
+  });
+
+  test("a check younger than 24 hours renders from the cache; past 24 hours it refetches once and refreshes the entry", async () => {
+    installCopy("0.2.2");
+    const calls = stubFetch(() => Response.json({ version: "0.2.4" }));
+    const dir = store();
+    writeCache(dir, "0.2.3", Date.now() - 23 * 60 * 60 * 1000);
+    const warm = await (await statusTool(dir)).execute({});
+    expect(calls.length).toBe(0);
+    expect(warm.split("\n")[1]).toBe("version 0.2.2 · latest 0.2.3");
+    const old = Date.now() - 25 * 60 * 60 * 1000;
+    writeCache(dir, "0.2.3", old);
+    const stale = await (await statusTool(dir)).execute({});
+    expect(calls.length).toBe(1);
+    expect(stale.split("\n")[1]).toBe("version 0.2.2 · latest 0.2.4");
+    const entry = JSON.parse(readFileSync(cacheFile(dir), "utf8"));
+    expect(entry.latest).toBe("0.2.4");
+    expect(entry.at).toBeGreaterThan(old);
+  });
+
+  test("a cache that cannot be parsed or trusted is no cache: one fetch, the line still prints, the file is rewritten", async () => {
+    installCopy("0.2.2");
+    const dir = store();
+    for (const content of [
+      '{"latest":"9.9.9","at":',
+      "",
+      "not json at all",
+      "[1,2,3]",
+      JSON.stringify({ at: Date.now() }),
+      JSON.stringify({ latest: "9.9.9" }),
+      JSON.stringify({ latest: 1, at: "yesterday" }),
+    ]) {
+      writeFileSync(cacheFile(dir), content);
+      const calls = stubFetch(() => Response.json({ version: "0.2.3" }));
+      const out = await (await statusTool(dir)).execute({});
+      expect(calls.length).toBe(1);
+      expect(out.split("\n")[1]).toBe("version 0.2.2 · latest 0.2.3");
+      const entry = JSON.parse(readFileSync(cacheFile(dir), "utf8"));
+      expect(entry.latest).toBe("0.2.3");
+      expect(entry.at).toBeGreaterThan(Date.now() - 60000);
+    }
+  });
+
+  test("an unreadable cache file is no cache either: one fetch, the line still prints, never an error", async () => {
+    installCopy("0.2.2");
+    const dir = store();
+    mkdirSync(cacheFile(dir));
+    const calls = stubFetch(() => Response.json({ version: "0.2.3" }));
+    const out = await (await statusTool(dir)).execute({});
+    expect(calls.length).toBe(1);
+    expect(out.split("\n")[1]).toBe("version 0.2.2 · latest 0.2.3");
+    expect(existsSync(cacheFile(dir))).toBe(true);
+  });
+
+  test("an eviction pass neither deletes nor needs to read the cache entry", async () => {
+    installCopy("0.2.2");
+    const dir = store();
+    const seedEvictable = () => {
+      mkdirSync(join(dir, "blocks"), { recursive: true });
+      mkdirSync(join(dir, "sessions"), { recursive: true });
+      for (const [id, text] of [
+        ["a".repeat(16), "old ".repeat(200)],
+        ["b".repeat(16), "new ".repeat(200)],
+      ]) {
+        writeFileSync(join(dir, "blocks", `${id}.json`), JSON.stringify({ blockId: id, text, at: 0 }));
+      }
+      writeFileSync(
+        join(dir, "sessions", "s1.json"),
+        JSON.stringify({ v: 1, next: 3, refs: {}, folds: [{ id: "f1", blocks: ["a".repeat(16)] }] }),
+      );
+    };
+    seedEvictable();
+    writeCache(dir, "0.2.3", Date.now());
+    const before = readFileSync(cacheFile(dir), "utf8");
+    const calls = stubFetch(() => Response.json({ version: "9.9.9" }));
+    const out = await (await statusTool(dir, { maxBytes: 300 })).execute({ evict: true });
+    expect(calls.length).toBe(0);
+    expect(out.split("\n")[1]).toBe("version 0.2.2 · latest 0.2.3");
+    expect(readdirSync(join(dir, "blocks"))).toHaveLength(0);
+    expect(readFileSync(cacheFile(dir), "utf8")).toBe(before);
+    rmSync(cacheFile(dir));
+    mkdirSync(cacheFile(dir));
+    seedEvictable();
+    const calls2 = stubFetch(() => Response.json({ version: "9.9.9" }));
+    const out2 = await (await statusTool(dir, { maxBytes: 300 })).execute({ evict: true });
+    expect(calls2.length).toBe(1);
+    expect(out2.split("\n")[1]).toBe("version 0.2.2 · latest 9.9.9");
+    expect(readdirSync(join(dir, "blocks"))).toHaveLength(0);
+    expect(existsSync(cacheFile(dir))).toBe(true);
   });
 });

@@ -6,14 +6,46 @@
  *
  * The installed copy is what magpie placed under `<cwd>/plugins/node_modules/<pkg>`;
  * a developer checkout has none, and falls back to this package's own manifest.
+ * The published-version answer is cached for a day in the store directory, so the hint costs
+ * one request a day, not one per call.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PUBLISHED_URL =
   "https://raw.githubusercontent.com/CrazyTomatooOo/magpie-acp-context/magpie-plugin/package.json";
 const ownManifest = fileURLToPath(new URL("../package.json", import.meta.url));
+
+const CHECK_CACHE_FILE = "version-check.json";
+const CHECK_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The last successful check while it is still young enough to use: `<store>/version-check.json`,
+ * holding `{latest, at}` beside the session and block files. Anything unreadable, unparsable,
+ * or too old is simply no cache — the check runs afresh and the file gets rewritten.
+ */
+function readCheckCache(storeDir) {
+  if (!storeDir) return null;
+  let entry;
+  try {
+    entry = JSON.parse(readFileSync(join(storeDir, CHECK_CACHE_FILE), "utf8"));
+  } catch {
+    return null;
+  }
+  if (typeof entry?.latest !== "string" || !entry.latest) return null;
+  if (!Number.isFinite(entry.at) || Date.now() - entry.at >= CHECK_CACHE_TTL_MS) return null;
+  return entry;
+}
+
+function writeCheckCache(storeDir, latest) {
+  if (!storeDir) return;
+  try {
+    writeFileSync(join(storeDir, CHECK_CACHE_FILE), JSON.stringify({ latest, at: Date.now() }), "utf8");
+  } catch {
+    // a store this plugin cannot write to costs at most the fetch we already made, never the line
+  }
+}
 
 function readJson(file) {
   try {
@@ -44,19 +76,23 @@ function isNewer(a, b) {
 
 /**
  * `version <own>` or `version <own> · latest <published>`, or null when anything failed.
- * One uncached fetch per call; the timeout keeps a slow network from stalling the tool.
+ * One fetch a day per store: a check younger than 24 h renders from the cache file, and the
+ * timeout keeps a slow network from stalling the tool.
  */
-export async function versionLine(cwd = process.cwd()) {
+export async function versionLine(cwd = process.cwd(), storeDir) {
   const own = ownVersion(cwd);
   if (!own) return null;
-  let latest;
-  try {
-    const res = await fetch(PUBLISHED_URL, { signal: AbortSignal.timeout(3000) });
-    if (!res.ok) return null;
-    latest = (await res.json())?.version;
-  } catch {
-    return null;
+  let latest = readCheckCache(storeDir)?.latest;
+  if (!latest) {
+    try {
+      const res = await fetch(PUBLISHED_URL, { signal: AbortSignal.timeout(3000) });
+      if (!res.ok) return null;
+      latest = (await res.json())?.version;
+    } catch {
+      return null;
+    }
+    if (typeof latest !== "string" || !latest) return null;
+    writeCheckCache(storeDir, latest);
   }
-  if (typeof latest !== "string" || !latest) return null;
   return isNewer(latest, own) ? `version ${own} · latest ${latest}` : `version ${own}`;
 }

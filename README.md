@@ -199,6 +199,11 @@ degrades to "no compression", never to a wrong request. Folded originals live in
 content-addressed directory, `<store.dir>/blocks/<blockId>.json`, because a tool call has no
 session of its own.
 
+The staleness hint's answer is cached too: `<store.dir>/version-check.json` holds
+`{latest, at}` for 24 h, so `acp_status` costs at most one request a day. A file that cannot be
+read, parsed, or trusted is treated as no cache — the check runs afresh and rewrites it — and
+eviction never touches it.
+
 Eviction (`acp_status {"evict":true}`) deletes TTL-expired blocks first, then the oldest
 referenced ones until the store fits `maxBytes`, and marks every fold that lost its original
 with `evictedAt` so `decompress` reports a hole instead of inventing text.
