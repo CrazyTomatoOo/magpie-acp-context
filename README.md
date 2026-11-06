@@ -103,10 +103,7 @@ Options can also come from the environment, which is handy for tests:
 | `minRangeBytes` | `5000` | smallest range worth folding |
 | `maxSummaryChars` | `20000` | summaries are truncated, never rejected |
 | `keepRecentTurns` | `3` | trailing user turns kept verbatim |
-| `nudge.windowTokens` | `200000` | the model's window; a hook is never told it, so the owner states it |
-| `nudge.minContextPct` | `0.45` | below this share of the window, no nudge |
-| `nudge.growthFloor` / `nudge.growthRatio` | `50000` / `0.45` | growth (unfolded tail) needed before a nudge |
-| `nudge.emergencyPct` | `0.95` | at this share the nudge says "fold now" |
+| `nudge.growthFloor` | `50000` | growth (unfolded tail) since the last fold that triggers a nudge — the flat 50K billion-context uses for every window |
 | `store.dir` | `~/.local/share/magpie-acp` | state + folded originals |
 | `store.maxBytes` / `store.ttlDays` | `536870912` / `30` | eviction budget, applied on `acp_status {evict:true}` |
 
@@ -191,8 +188,9 @@ asserts on the body the fake upstream actually received, not on a CLI success me
 
 - Only prose can carry a ref; tool results and JSON arguments cannot, so `m00003` may be
   skipped. Refs are display handles, never addresses — folds are keyed by blockId.
-- The window size is declared by the owner (`nudge.windowTokens`); hooks are never told the
-  model's real window, so the percentage is only as right as that number.
+- The nudge has one trigger: growth since the last fold, at the same flat 50K billion-context
+  uses. Percentage-of-window gates were dropped rather than shipped guessed: a hook is never
+  told the model's real window, so a percentage would be a number nobody measured.
 - Usage is read from `onResponse`, which the gateway assembles from a bounded copy of the reply;
   verified for both whole-body and streamed replies in the container.
 - Eviction and reconciliation are manual (`acp_status {evict:true}` or the CLI): nothing runs on

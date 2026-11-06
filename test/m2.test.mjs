@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { decideNudge, nudgeText, NUDGE_EMERGENCY, NUDGE_HINT, NUDGE_NONE } from "../src/nudge.mjs";
+import { decideNudge, nudgeText, NUDGE_HINT, NUDGE_NONE } from "../src/nudge.mjs";
 import { estimateTokens, readUsage } from "../src/usage.mjs";
 import { cleanup } from "../src/store.mjs";
 import { loadConfig } from "../src/config.mjs";
@@ -57,33 +57,37 @@ describe("usage", () => {
 });
 
 describe("nudge", () => {
-  const cfg = cfgOf({ nudge: { windowTokens: 1000, minContextPct: 0.45, growthFloor: 100, growthRatio: 0.1, emergencyPct: 0.95 } });
+  const cfg = cfgOf({ nudge: { growthFloor: 100 } });
 
   test("quiet below the floor", () => {
-    expect(decideNudge({ cfg, contextTokens: 100 }).kind).toBe(NUDGE_NONE);
+    expect(decideNudge({ cfg, sinceGrowth: 99 }).kind).toBe(NUDGE_NONE);
   });
 
-  test("quiet when it is over the floor but has not grown", () => {
-    const d = decideNudge({ cfg, contextTokens: 600, sinceGrowth: 50 });
+  test("a big context that has not grown is still quiet", () => {
+    const d = decideNudge({ cfg, sinceGrowth: 50 });
     expect(d.kind).toBe(NUDGE_NONE);
   });
 
-  test("a hint once the floor and the growth are both passed", () => {
-    const d = decideNudge({ cfg, contextTokens: 700, sinceGrowth: 600 });
+  test("a hint once growth reaches the floor", () => {
+    const d = decideNudge({ cfg, sinceGrowth: 100 });
     expect(d.kind).toBe(NUDGE_HINT);
-    expect(nudgeText({ ...d, range: "m00001–m00004" }, cfg)).toContain("上下文已用到 70%");
+    const text = nudgeText({ ...d, range: "m00001–m00004" });
+    expect(text).toContain("增长了 100 tokens");
+    expect(text).toContain("100 是提醒线");
   });
 
-  test("emergency near the window", () => {
-    expect(decideNudge({ cfg, contextTokens: 990 }).kind).toBe(NUDGE_EMERGENCY);
+  test("the default floor is the flat 50K billion-context uses", () => {
+    const d = decideNudge({ cfg: cfgOf({}), sinceGrowth: 50000 });
+    expect(d.kind).toBe(NUDGE_HINT);
+    expect(decideNudge({ cfg: cfgOf({}), sinceGrowth: 49999 }).kind).toBe(NUDGE_NONE);
   });
 
   test("a retry is suppressed only once the last nudge was answered", () => {
-    const first = decideNudge({ cfg, contextTokens: 700, sinceGrowth: 600 });
+    const first = decideNudge({ cfg, sinceGrowth: 120 });
     expect(first.repeat).toBe(false);
-    const retry = decideNudge({ cfg, contextTokens: 700, sinceGrowth: 600, lastNudge: first, answeredSince: false });
+    const retry = decideNudge({ cfg, sinceGrowth: 120, lastNudge: first, answeredSince: false });
     expect(retry.repeat).toBe(false);
-    const late = decideNudge({ cfg, contextTokens: 700, sinceGrowth: 600, lastNudge: first, answeredSince: true });
+    const late = decideNudge({ cfg, sinceGrowth: 120, lastNudge: first, answeredSince: true });
     expect(late.repeat).toBe(true);
   });
 });
@@ -107,7 +111,7 @@ describe("onResponse", () => {
 
   test("the nudge decides on the billed number, not on the estimate", async () => {
     const dir = store();
-    const options = { enabled: true, store: { dir }, nudge: { windowTokens: 1000, minContextPct: 0.45, growthFloor: 100, growthRatio: 0.1, emergencyPct: 0.95 } };
+    const options = { enabled: true, store: { dir }, nudge: { growthFloor: 100 } };
     const body = chat(1);
     await onRequest(structuredClone(body), {
       protocol: "chat",
@@ -123,7 +127,7 @@ describe("onResponse", () => {
     const next = await onRequest(structuredClone(body), {
       protocol: "chat",
       origin: "local", session: "s2", options });
-    expect(next.messages.at(-1).content).toContain("上下文已用到 70%");
+    expect(next.messages.at(-1).content).toContain("增长了 700 tokens");
 
     // that nudge was delivered: its reply landed, so the same body again is a repeat
     await onResponse({ usage: { prompt_tokens: 700, completion_tokens: 3 } }, {
@@ -182,6 +186,6 @@ describe("acp_status", () => {
     const out = await tool.execute({ session: "s9" });
     expect(out).toContain("s9");
     expect(out).toContain("计费 prompt=1,234 tok");
-    expect(out).toContain("窗口按 200,000 tokens 计");
+    expect(out).toContain("折叠提醒线 = 增长 50,000 tokens");
   });
 });

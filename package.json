@@ -20,11 +20,7 @@
       "maxSummaryChars": 20000,
       "keepRecentTurns": 3,
       "nudge": {
-        "windowTokens": 200000,
-        "minContextPct": 0.45,
-        "growthFloor": 50000,
-        "growthRatio": 0.45,
-        "emergencyPct": 0.95
+        "growthFloor": 50000
       },
       "store": {
         "dir": "~/.local/share/magpie-acp",

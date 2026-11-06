@@ -57,11 +57,6 @@ export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], 
   return parts.join("\n");
 }
 
-/** The window a percentage is taken of. Providers do not tell a hook, so it is configured. */
-function windowTokens(cfg) {
-  return Number(cfg.nudge.windowTokens) || 200000;
-}
-
 export function markerText(fold) {
   const head = `[acp] ${fold.startRef}–${fold.endRef}${fold.topic ? ` ${fold.topic}` : ""}`;
   return `${head}\n${neutralizeMarkers(fold.summary)}`;
@@ -241,7 +236,6 @@ export async function onRequest(body, ctx) {
     const answeredSince = session.state.usage.length > Number(session.nudge()?.usageCount ?? 0);
     const decision = decideNudge({
       cfg,
-      contextTokens,
       sinceGrowth,
       lastNudge: session.nudge(),
       folds: session.folds().length,
@@ -251,8 +245,8 @@ export async function onRequest(body, ctx) {
       cfg.mode === "assist" && decision.kind !== NUDGE_NONE && !decision.repeat
         ? nudgeText(
             {
-              kind: decision.kind,
-              pct: decision.pct,
+              since: decision.since,
+              growthFloor: decision.growthFloor,
               range: window ? `${units[window.from]?.ref}–${units[window.to]?.ref}` : "",
             },
             cfg,

@@ -171,7 +171,8 @@ describe("the pinned snapshot", () => {
     expect(DEFAULTS.refFormat).toBe(snapshot.refs.format);
     expect(DEFAULTS.minRangeBytes).toBe(snapshot.config["compress.minCompressRange"]);
     expect(DEFAULTS.maxSummaryChars).toBe(snapshot.config["compress.maxSummaryLength"]);
-    expect(DEFAULTS.nudge.minContextPct).toBe(snapshot.config["nudge.minContextLimitPct"]);
-    expect(DEFAULTS.nudge.emergencyPct).toBe(snapshot.config["nudge.emergencyThresholdPct"]);
+    // One trigger, one number: the same flat floor upstream pins for every window.
+    expect(DEFAULTS.nudge.growthFloor).toBe(snapshot.config["nudge.growthFloor"]);
+    expect(snapshot.config["nudge.growthCap"]).toBe(snapshot.config["nudge.growthFloor"]);
   });
 });

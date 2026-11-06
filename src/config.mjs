@@ -19,9 +19,10 @@ export const DEFAULTS = {
   minRangeBytes: 5000,
   maxSummaryChars: 20000,
   keepRecentTurns: 3,
-  // windowTokens is ours, not the provider's: a hook is never told the model's window,
-  // so the percentage has to be taken of a number the owner states.
-  nudge: { windowTokens: 200000, minContextPct: 0.45, growthFloor: 50000, growthRatio: 0.45, emergencyPct: 0.95 },
+  // One knob, because there is one trigger: growth since the last fold. billion-context
+  // pins the cadence at a flat 50K for every window size, and a hook is never told the
+  // model's window, so a percentage here would be a guess.
+  nudge: { growthFloor: 50000 },
   store: { dir: "~/.local/share/magpie-acp", maxBytes: 536870912, ttlDays: 30 },
   gatewayTimeoutMs: 3000,
   failOpen: true,
@@ -50,9 +51,6 @@ export function loadConfig(options = {}) {
   if (process.env.MAGPIE_ACP_INJECT_STYLE) cfg.injectStyle = process.env.MAGPIE_ACP_INJECT_STYLE;
   if (process.env.MAGPIE_ACP_KEEP_TURNS) cfg.keepRecentTurns = Number(process.env.MAGPIE_ACP_KEEP_TURNS);
   if (process.env.MAGPIE_ACP_MIN_BYTES) cfg.minRangeBytes = Number(process.env.MAGPIE_ACP_MIN_BYTES);
-  if (process.env.MAGPIE_ACP_WINDOW) cfg.nudge = { ...cfg.nudge, windowTokens: Number(process.env.MAGPIE_ACP_WINDOW) };
-  if (process.env.MAGPIE_ACP_MIN_PCT) cfg.nudge = { ...cfg.nudge, minContextPct: Number(process.env.MAGPIE_ACP_MIN_PCT) };
-  if (process.env.MAGPIE_ACP_EMERGENCY_PCT) cfg.nudge = { ...cfg.nudge, emergencyPct: Number(process.env.MAGPIE_ACP_EMERGENCY_PCT) };
   if (process.env.MAGPIE_ACP_GROWTH_FLOOR) cfg.nudge = { ...cfg.nudge, growthFloor: Number(process.env.MAGPIE_ACP_GROWTH_FLOOR) };
   if (process.env.MAGPIE_ACP_AGENTS !== undefined) {
     cfg.agents = String(process.env.MAGPIE_ACP_AGENTS)

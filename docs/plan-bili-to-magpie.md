@@ -230,7 +230,7 @@ node cli.mjs status --json | jq '.sessions[0]'
 | 按了"连接"后 bili 不再管该客户端 | 该客户端失去 bili 的折叠与 nudge | 只对空闲窗口执行;随时可断回 |
 | 两套压缩并存(opencode/codex) | 折叠收益被宿主压缩覆盖 | 迁移期接受;稳定后关宿主压缩 |
 | 无会话头的客户端 | 同目录会话共用账本(块按内容寻址,故不会串内容,只是账本混) | 用带 `X-Magpie-Session` 的客户端,或每目录单窗口 |
-| 窗口声明值小于真实窗口 | nudge 过早 | `nudge.windowTokens` 按真实窗口设 |
+| 增长门槛低于实际节奏 | nudge 过早 | 按需调 `nudge.growthFloor`(默认 50000,与 bili 一致) |
 | 上游改契约(kernel 默认值/提示词/工具 schema) | 插件不崩,但可能落后 | `npm run parity` 每次升级后跑一遍 |
 
 **不可逆的只有一件事**:删 `~/.local/share/billion-context`。在此之前确认:所有需要旧 ref 解压的会话都已 `import-bili` 导入,且 `decompress` 抽查通过。

@@ -211,17 +211,16 @@ export function unlock(storeDir, key = null) {
 }
 
 /** One line per session, the same shape the agent sees from `acp_status`. */
-export function renderStatus({ storeDir, sessions, blocks, bytes }, { window = 200000, limit = 5 } = {}) {
+export function renderStatus({ storeDir, sessions, blocks, bytes }, { growthFloor = 50000, limit = 5 } = {}) {
   const num = (n) => Number(n ?? 0).toLocaleString("en-US");
-  const out = [`store ${storeDir}:${num(blocks.length)} 个块 / ${num(bytes)} 字节;${num(sessions.length)} 个会话;窗口按 ${num(window)} tokens 计。`];
+  const out = [`store ${storeDir}:${num(blocks.length)} 个块 / ${num(bytes)} 字节;${num(sessions.length)} 个会话;折叠提醒线 = 增长 ${num(growthFloor)} tokens。`];
   if (!sessions.length) out.push("还没有会话记录。");
   for (const s of sessions.slice(0, limit)) {
-    const pct = s.request ? `~${Math.round((s.request.tokens / window) * 100)}%` : "—";
     out.push(
       [
         `· ${s.key}`,
         `refs=${num(s.refs)} folds=${num(s.folds)} evicted=${num(s.evictedFolds)}`,
-        `本轮≈${num(s.request?.tokens ?? 0)} tok(${pct}),计费 prompt=${num(s.lastUsage?.input ?? 0)} tok`,
+        `本轮≈${num(s.request?.tokens ?? 0)} tok,计费 prompt=${num(s.lastUsage?.input ?? 0)} tok`,
         `收到 usage ${num(s.usage)} 次`,
         `nudge=${s.nudge ? `${s.nudge.kind}@${num(s.nudge.tokens ?? 0)} tok` : "无"}`,
       ].join(" · "),

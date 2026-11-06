@@ -3,7 +3,7 @@
  * Operator CLI. Deliberately not part of the request path and not part of either Bun host:
  * it runs under plain Node (>= 22) so it can be used when magpie itself is not running.
  *
- *   magpie-acp status  [--limit N] [--window N] [--json]
+ *   magpie-acp status  [--limit N] [--growth-floor N] [--json]
  *   magpie-acp sessions [--json]
  *   magpie-acp block   <id|ref> [--json]
  *   magpie-acp forget  <id|ref>... [--yes]
@@ -24,7 +24,7 @@ const DEFAULTS = {
   dir: "~/.local/share/magpie-acp",
   maxBytes: 536870912,
   ttlDays: 30,
-  windowTokens: 200000,
+  growthFloor: 50000,
 };
 
 function takeFlags(argv) {
@@ -88,14 +88,14 @@ function main(argv) {
   const { flags, rest } = takeFlags(argv);
   const command = rest[0];
   const dir = storeDir(flags);
-  const window = num(flags.window, DEFAULTS.windowTokens);
+  const growthFloor = num(flags["growth-floor"], DEFAULTS.growthFloor);
 
   switch (command) {
     case "status": {
       const scan = scanStore(dir);
       if (flags.json) return print(scan, flags);
       const limit = num(flags.limit, 5);
-      return print(renderStatus(scan, { window, limit }), flags);
+      return print(renderStatus(scan, { growthFloor, limit }), flags);
     }
     case "sessions": {
       const scan = scanStore(dir);

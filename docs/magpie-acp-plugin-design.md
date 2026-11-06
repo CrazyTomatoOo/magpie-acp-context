@@ -130,10 +130,7 @@ sequenceDiagram
 | `minRangeBytes` | `5000` | 小于它的范围不接受 compress |
 | `maxSummaryChars` | `20000` | 摘要上限,超出要求模型重写 |
 | `keepRecentTurns` | `3` | 尾部保留轮数 |
-| `nudge.minContextPct` | `0.45` | 低于它不催 |
-| `nudge.growthFloor` | `50000` | 绝对增长门槛 |
-| `nudge.growthRatio` | `0.45` | 相对增长门槛 |
-| `nudge.emergencyPct` | `0.95` | 到它就插紧急提示 |
+| `nudge.growthFloor` | `50000` | 唯一的触发口径:自上次折叠后增长到它就催 |
 | `store.dir` | `~/.local/share/magpie-acp` | 与 magpie 配置目录分开 |
 | `store.maxBytes` | `536870912` | 超了按最久未用淘汰 |
 | `store.ttlDays` | `30` | 过期回收 |
@@ -578,17 +575,16 @@ magpie 自己记下的清单(`plugin-tools.json`):
 | 副本上限 8 MiB,失败/流中断时 `ctx.success === false`,回调失败不影响请求 | 同一节 |
 | 四种协议的用量字段各不相同,必须各解一份 | `src/usage.mjs`:`chat.usage.prompt_tokens`、`anthropic.usage.input_tokens`(+`cache_read_input_tokens`/`cache_creation_input_tokens`)、`responses.usage.input_tokens`(+`input_tokens_details.cached_tokens`)、`gemini.usageMetadata.promptTokenCount`(+`cachedContentTokenCount`) |
 
-我们没有可信的窗口大小:hook 拿不到模型上下文窗口,所以 `nudge.windowTokens` 由使用者声明(默认 200000),百分比按它算。这是有意的取舍——宁可让 owner 填一个数,也不要猜。
+我们没有可信的窗口大小:hook 拿不到模型上下文窗口。所以触发口径里没有百分比——按窗口算比例等于拿一个没人测量过的数当门闸。只留一条:自上次折叠后增长到 `nudge.growthFloor`(默认 50000)就催,与 billion-context 的 flat 50K 节奏一致。
 
 ### 17.2 判定规则
 
 ```
 contextTokens = max(estimateBodyTokens(body), 最近一次 onResponse 的 input)
-window        = max(1000, nudge.windowTokens)
-pct           = contextTokens / window
-growthFloor   = max(nudge.growthFloor, round(window * nudge.growthRatio))
-kind          = 0.95 <= pct ? emergency : (pct >= minContextPct && sinceGrowth >= growthFloor ? hint : none)
-fingerprint   = "<kind>:<window>:<round(contextTokens/500)>:<folds>"
+sinceGrowth   = max(0, contextTokens - 已折叠字节/3.5)
+growthFloor   = max(1, nudge.growthFloor)   // 默认 50000
+kind          = sinceGrowth >= growthFloor ? hint : none
+fingerprint   = "<kind>:<growthFloor>:<round(sinceGrowth/500)>:<folds>"
 ```
 
 - `sinceGrowth = contextTokens - round(已折叠字节 / 3.5)`:折叠掉的量不算增长,所以一个不停折叠的会话,增长始终等于「未折叠尾部」的大小。

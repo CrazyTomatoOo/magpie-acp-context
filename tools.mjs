@@ -114,7 +114,7 @@ function statusTool(cfg) {
       const scan = scanStore(cfg.storeDir);
       const wanted = args?.session ? scan.sessions.filter((s) => s.key === args.session) : [];
       const shown = wanted.length ? wanted : scan.sessions;
-      const out = [renderStatus({ ...scan, sessions: shown }, { window: Number(cfg.nudge.windowTokens) || 200000, limit: Number(args?.limit ?? 5) })];
+      const out = [renderStatus({ ...scan, sessions: shown }, { growthFloor: Number(cfg.nudge.growthFloor) || 50000, limit: Number(args?.limit ?? 5) })];
       if (!wanted.length && args?.session) out.push(`没有这个会话:${args.session}。用 acp_status 不带参数列出现有会话。`);
       if (args?.evict) {
         const done = cleanup(cfg.storeDir, { maxBytes: cfg.store.maxBytes, ttlDays: cfg.store.ttlDays });
