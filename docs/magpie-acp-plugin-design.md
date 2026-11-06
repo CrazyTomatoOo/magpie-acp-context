@@ -121,7 +121,7 @@ sequenceDiagram
 
 | 键 | 默认 | 含义 |
 |---|---|---|
-| `enabled` | `false` | 与宿主的插件开关是两把锁,都开才生效 |
+| `enabled` | `true` | 与宿主的插件开关是两把锁,都开才生效 |
 | `agents` | `[]` | canary 名单:空=全部 agent,否则只服务列出的 |
 | `origins` | `["local","magpie-key"]` | 只服务宿主判定的自己人:`local`=回环直连,`magpie-key`=本机自己的共享 key;`gateway-key`/`remote`/未知一律跳过 |
 | `mode` | `"assist"` | `render`=只贴 ref / 折叠;`assist`=额外注入 philosophy 与 nudge |
@@ -136,6 +136,7 @@ sequenceDiagram
 | `store.ttlDays` | `30` | 过期回收 |
 | `gatewayTimeoutMs` | `3000` | 宿主预算;自身预算 = `min(该值 - 200, 自设上限)` |
 | `failOpen` | `true` | hook 出错就原样放行(仓库其余插件都这么做) |
+| `updateCheck` | `true` | `acp_status` 的陈旧提示:每天至多一次无鉴权 GET;关掉它,提示、请求和缓存读取一起去掉 |
 
 ---
 
