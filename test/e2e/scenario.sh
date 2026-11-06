@@ -176,6 +176,14 @@ say "survived a restart"
 # M2: the reply's own usage reaches the ledger, and acp_status reports it.
 grep -q '上下文自上次折叠后增长了' "$OUT/capture/"*.body || { say "FAIL no nudge reached the provider"; exit 1; }
 say "nudge reached the provider"
+# The version line must come from the store's cache, never the network: the container has no
+# route out at all, so a line that appears at all proves it rendered from <store>/version-check.json
+# — the product's own cache path, seeded the way a recent successful check would have left it.
+# 99.0.0 is far ahead of any release, so the line must carry "latest 99.0.0" rather than "local build".
+VER=$("$BUN" -e 'console.log(JSON.parse(require("node:fs").readFileSync("/opt/magpie-acp-context/package.json","utf8")).version)')
+STORE="${MAGPIE_ACP_STORE:-/tmp/acp-store}"
+mkdir -p "$STORE"
+printf '{"latest":"99.0.0","at":%s}\n' "$("$BUN" -e 'console.log(Date.now())')" >"$STORE/version-check.json"
 
 "$BUN" /work/mcp.mjs "http://127.0.0.1:$GW_PORT" magpie-acp-context_acp_status '{}' >"$OUT/status.log" 2>&1 || true
 sed 's/^/[e2e] /' "$OUT/status.log"
@@ -183,6 +191,10 @@ mkdir -p "$OUT/status"
 OUT="$OUT/status" "$BUN" /work/mcp.mjs "http://127.0.0.1:$GW_PORT" magpie-acp-context_acp_status '{}' >>"$OUT/status.log" 2>&1 || true
 grep -q '计费 prompt=1,234 tok' "$OUT/status/mcp.json" || { say "FAIL onResponse usage never reached the ledger"; exit 1; }
 say "usage recorded from the reply"
+# The line can only have come from the seeded cache — with the network sealed, a fetch would
+# have failed and left no line at all.
+grep -qF "version $VER · latest 99.0.0" "$OUT/status/mcp.json" || { say "FAIL the version line did not render from the seeded cache"; exit 1; }
+say "version line served from the cache with the network sealed"
 
 # M3: a *streamed* reply's usage must reach the ledger too, not just a whole-body reply.
 "$BUN" /work/request.mjs --stream >/tmp/req.json
