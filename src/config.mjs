@@ -2,7 +2,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 export const DEFAULTS = {
-  enabled: false,
+  // On by default (owner decision, wayfinder ticket #14): a plugin installed and loaded but
+  // silent is indistinguishable from a broken one, and it is the failure the first real-client
+  // run actually hit. What "on" costs is a ~100-character prompt and `[mNNNNN]` prefixes - the
+  // hook never folds anything the agent did not hand it through the compress tool - and an
+  // operator turns it off with the host's own switch: `magpie plugin off magpie-acp-context`.
+  enabled: true,
   // agents: a canary list. Empty means "every agent"; naming agents means "only these"
   // (magpie reports the client in ctx.agent). Rollout is then one client at a time and a
   // client left out of the list sees byte-identical requests.

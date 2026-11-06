@@ -33,7 +33,6 @@ docker run --rm \
   --security-opt no-new-privileges \
   -e HOME=/home/runner \
   -e XDG_CONFIG_HOME=/home/runner/.config \
-  -e MAGPIE_ACP_ENABLED=1 \
   -e MAGPIE_ACP_KEEP_TURNS=1 \
   -e MAGPIE_ACP_MIN_BYTES=1000 \
   -e MAGPIE_ACP_STORE=/tmp/acp-store \

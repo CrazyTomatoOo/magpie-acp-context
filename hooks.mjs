@@ -17,9 +17,9 @@
  * Failing open is the default: any error returns undefined, i.e. the original request.
  */
 import { loadConfig } from "./src/config.mjs";
-import { adapterFor } from "./src/protocol.mjs";
+import { adapterFor, advertisedToolNames } from "./src/protocol.mjs";
 import { openSession } from "./src/store.mjs";
-import { compressCalls } from "./src/compress.mjs";
+import { canCallOwnTools, compressCalls } from "./src/compress.mjs";
 import { blockIdOf, formatRef, neutralizeMarkers, sha256, utf8Bytes } from "./src/text.mjs";
 import { decideNudge, nudgeText, NUDGE_NONE } from "./src/nudge.mjs";
 import { estimateBodyTokens, readUsage } from "./src/usage.mjs";
@@ -203,6 +203,13 @@ export async function onRequest(body, ctx) {
     // Canary gate: an agent left out of the list never reaches the store, so its requests
     // are byte-identical to what the client sent.
     if (!allowsAgent(cfg, ctx) || !allowsOrigin(cfg, ctx)) return undefined;
+    // Tool gate: the prompt asks for a tool magpie serves, so a client that declares tools,
+    // none of ours, and no code surface that could reach them can never obey it - it only
+    // pays for the prompt and the `[mNNNNN]` prefixes while nothing can ever fold. A request
+    // with no declaration list at all is not evidence either way (older hosts, probes) and
+    // is served as before.
+    const declared = advertisedToolNames(body);
+    if (declared && !canCallOwnTools(declared)) return undefined;
     const adapter = adapterFor(ctx?.protocol);
     if (!adapter || !adapter.unitArray(body)) return undefined;
 
@@ -331,6 +338,11 @@ export async function onResponse(reply, ctx) {
     const usage = readUsage(reply, ctx?.protocol);
     if (!usage) return;
     const session = openSession(cfg.storeDir, sessionKeyOf(ctx));
+    // A session the hook never served has nothing to record usage FOR: either the request
+    // gate above skipped this client (no declaration of our tools) or this is a reply to a
+    // request that never reached the hook. Writing usage here would create a store entry for
+    // a client that is byte-identically proxied, and its file would never fold anything.
+    if (!session.existed) return;
     session.withLock(() => {
       session.recordUsage({ ...usage, at: Date.now(), model: ctx?.model ?? null, seq: session.state.request?.seq ?? null });
       session.save();

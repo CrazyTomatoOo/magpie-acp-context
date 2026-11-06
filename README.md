@@ -5,7 +5,8 @@ hooks** — the only magpie surface with a filesystem, a network and a clock.
 
 Status: **M3** — deterministic refs, fold replay, prompt injection, real-usage nudging, four
 tools over magpie's own MCP server, and an operator CLI (`status`, `block`, `forget`, `unlock`,
-`reconcile`) that repairs the store without touching the request path.
+`reconcile`) that repairs the store without touching the request path. On by default: installing
+and restarting is enough, and a client that cannot call the tools is left untouched.
 
 ## Why hooks and not middleware
 
@@ -25,20 +26,24 @@ proxy rewrites bodies. That is the same split the community plugins
 
 ## What it does, per request
 
-1. Hash every message into a **blockId** (`sha256(role + "\0" + text)[0:16]`) and hand out a
+1. Skip the request when it declares tools, none of them is ours, and none of them is a code or
+   shell surface that could call MCP anyway (`tools` absent = no way to tell, so the request is
+   served). A client that cannot call `compress` would only get a note asking for something it
+   cannot do, and a ledger row nobody can fold.
+2. Hash every message into a **blockId** (`sha256(role + "\0" + text)[0:16]`) and hand out a
    monotonic **ref** (`m00001`) per blockId — refs never renumber when history shifts.
-2. Find `compress` calls already present in the transcript, parse every legacy payload shape,
+3. Find `compress` calls already present in the transcript, parse every legacy payload shape,
    and record them as **folds** (`refs` + summary + topic). The call is recognised under the
    name the client replays — `compress`, the served `magpie-acp-context_compress`, or the MCP
    wrapper a client adds around it (`mcp__magpie__magpie-acp-context_compress`).
-3. Replay live folds: the folded range is replaced by one marker message
+4. Replay live folds: the folded range is replaced by one marker message
    `[acp] m00002–m00005 <topic>\n<summary>`; a fold dies as soon as an anchor leaves the
    history (the client compacted) or the range re-enters the recent window.
-4. Stamp `[m00001] ` in front of prose turns, and append the compression note to the turn
+5. Stamp `[m00001] ` in front of prose turns, and append the compression note to the turn
    being sent.
-5. Decide whether to nudge, using the **billed prompt tokens** the previous reply reported
+6. Decide whether to nudge, using the **billed prompt tokens** the previous reply reported
    (`onResponse`), never our own estimate alone; nudge text goes into the same note.
-6. Return `undefined` when nothing changed — a promise-resolved `undefined` sends the original
+7. Return `undefined` when nothing changed — a promise-resolved `undefined` sends the original
    bytes, so prompt caches survive untouched turns.
 
 Safety rules: never touch the pending turn, never split a tool call from its result, never
@@ -96,8 +101,18 @@ directly, so it works when magpie is not running:
 ```sh
 magpie plugin add github:crazytomatooo/magpie-acp-context    # the published path
 magpie plugin add ./                                        # or a checkout, for development
-magpie plugin options magpie-acp-context '{"enabled":true,"keepRecentTurns":3}'
 ```
+
+Nothing to configure: the switch ships on, so a restart of the gateway is the whole install.
+`magpie plugin off magpie-acp-context` turns it back off; per-session options
+(`magpie plugin options magpie-acp-context '{"keepRecentTurns":3}'`) stay optional.
+
+A client that cannot call the plugin's tools is left alone even with the switch on: when a
+request declares tools, none of them reduces to this plugin's prefix, and none is a code/shell
+surface, the request passes through untouched — no refs, no note, no ledger row. omp is the case
+that shapes this rule: it declares `read`/`bash`/`eval` and reaches every MCP tool through
+`eval`, so naming our tool is not the only way to be able to call it. A request that declares
+no tools at all cannot be judged that way and is served as before.
 
 The repository carries two kinds of tags and they mean different things: `magpie-plugin` is the
 **install pointer** and always names the current build (it moves forward, so `magpie plugin
@@ -113,16 +128,19 @@ from `magpie plugin options` do not need a restart.
 
 ### Is it working?
 
-`enabled` ships `false`; nothing happens until you turn it on and restart the gateway. After that:
+`enabled` ships `true`; restart the gateway after installing and the next session is served.
+Nothing must be pinned per client — a client that declares none of the plugin's tools is skipped
+by the tool gate, so an unrelated agent can share the same gateway untouched.
 
 ```sh
 magpie plugin --json | grep loaded        # "loaded": null means the hooks loaded
 ```
 
-In a session, ask the agent for `<short>_acp_status`: it prints one line per session with refs,
-folds, the growth since the last fold against the 50,000-token nudge line, and the billed prompt
-tokens the last reply reported. On disk, `<store.dir>/sessions/` gains one file per session and
-`<store.dir>/blocks/` one file per folded message.
+In a session, ask the agent for `<short>_acp_status`: its first line names the switch, which
+declared tools count as ours, and whether this caller passed the gate; then one line per session
+with refs, folds, the growth since the last fold against the 50,000-token nudge line, and the
+billed prompt tokens the last reply reported. On disk, `<store.dir>/sessions/` gains one file per
+session and `<store.dir>/blocks/` one file per folded message.
 
 The nudge is the visible half: once a session has grown 50,000 tokens since its last fold, the
 next request carries a note asking the model to fold — the same cadence billion-context uses, so
@@ -139,7 +157,7 @@ on the wire.
 
 | option | default | meaning |
 |---|---|---|
-| `enabled` | `false` | master switch |
+| `enabled` | `true` | master switch; `magpie plugin off` also works. Even when on, a client that declares no tool of ours is skipped |
 | `agents` | `[]` | canary list: empty = every agent, otherwise only the named ones start the hook |
 | `origins` | `["local","magpie-key"]` | callers served at all: magpie's own `local`/`magpie-key`; `gateway-key`, `remote` and an unknown origin are skipped |
 | `mode` | `assist` | `assist` folds and nudges; `render` only renders existing folds |

@@ -114,8 +114,18 @@ function statusTool(cfg) {
       const scan = scanStore(cfg.storeDir);
       const wanted = args?.session ? scan.sessions.filter((s) => s.key === args.session) : [];
       const shown = wanted.length ? wanted : scan.sessions;
-      const out = [renderStatus({ ...scan, sessions: shown }, { growthFloor: Number(cfg.nudge.growthFloor) || 50000, limit: Number(args?.limit ?? 5) })];
+      const out = [
+        [
+          `开关:${cfg.enabled ? "开" : "关"}`,
+          `mode=${cfg.mode}`,
+          "工具门:声明了工具、却既无本插件的工具也无可执行(code/shell)面时不介入",
+          `agents=${cfg.agents.length ? cfg.agents.join(",") : "全部"}`,
+          `origins=${cfg.origins.join(",")}`,
+        ].join(" · "),
+        renderStatus({ ...scan, sessions: shown }, { growthFloor: Number(cfg.nudge.growthFloor) || 50000, limit: Number(args?.limit ?? 5) }),
+      ];
       if (!wanted.length && args?.session) out.push(`没有这个会话:${args.session}。用 acp_status 不带参数列出现有会话。`);
+      if (!cfg.enabled) out.push("关着时不会压缩任何请求;打开:magpie plugin options magpie-acp-context '{\"enabled\":true}'。");
       if (args?.evict) {
         const done = cleanup(cfg.storeDir, { maxBytes: cfg.store.maxBytes, ttlDays: cfg.store.ttlDays });
         out.push(`回收:删了 ${num(done.removed)} 个块,释放 ${num(done.freed)} 字节,标记 ${num(done.evictedFolds)} 个 fold 为已淘汰。`);

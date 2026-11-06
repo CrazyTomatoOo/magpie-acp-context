@@ -387,12 +387,20 @@ describe("canary rollout", () => {
     expect(existsSync(join(options.store.dir, "sessions"))).toBe(false);
   });
 
-  test("an agent inside the list is recorded", async () => {
+  test("an agent inside the list is recorded, once its request has been served", async () => {
     const options = opts({ agents: ["omp"] });
     const reply = { usage: { prompt_tokens: 900, completion_tokens: 12, total_tokens: 912 } };
+    const sessionFiles = () =>
+      existsSync(join(options.store.dir, "sessions"))
+        ? readdirSync(join(options.store.dir, "sessions")).filter((n) => n.endsWith(".json"))
+        : [];
+    // A reply alone is not evidence that this plugin serves the client: a ledger written
+    // from a reply nobody served would be a trace of a request that never reached the hook.
     await onResponse(reply, ctxOf(options, { agent: "omp" }));
-    const files = readdirSync(join(options.store.dir, "sessions")).filter((n) => n.endsWith(".json"));
-    expect(files.length).toBe(1);
+    expect(sessionFiles().length).toBe(0);
+    await onRequest(structuredClone(chatHistory({ includeCompress: false })), ctxOf(options, { agent: "omp" }));
+    await onResponse(reply, ctxOf(options, { agent: "omp" }));
+    expect(sessionFiles().length).toBe(1);
   });
 
   test("an empty list means every agent, and disabled means nobody", async () => {

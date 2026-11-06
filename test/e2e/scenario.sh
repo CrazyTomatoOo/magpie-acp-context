@@ -84,6 +84,36 @@ if grep -q '\[m00001\] You are' "$OUT/upstream-body.json"; then
 fi
 check "the note was appended to the pending turn" '[acp] 每条历史消息前'
 
+# The tool gate, both directions. The switch is on by default and this run sets no
+# MAGPIE_ACP_ENABLED at all, so what keeps a client without our tools untouched is the gate.
+latest_body() { ls -t "$OUT"/capture/*.body 2>/dev/null | sed -n 1p; }
+
+"$BUN" /work/request.mjs --foreign-tools >/tmp/req.json
+mkdir -p "$OUT/gated"
+"$BUN" /work/post.mjs "http://127.0.0.1:$GW_PORT/v1/chat/completions" "$OUT/gated" >/dev/null 2>&1 || true
+GATED=$(latest_body)
+[ -n "$GATED" ] || { say "FAIL the gated request never reached the provider"; exit 1; }
+cp "$GATED" "$OUT/gated-body.json"
+if grep -q '\[m00001\]' "$OUT/gated-body.json"; then fail "a client that declares no tool of ours was stamped"; fi
+if grep -q '\[acp\]' "$OUT/gated-body.json"; then fail "a client that declares no tool of ours got the note"; fi
+[ "$fail" -eq 0 ] && say "  ok   tool gate: a client that declares no tool of ours is untouched"
+
+"$BUN" /work/request.mjs --own-tools >/tmp/req.json
+mkdir -p "$OUT/own"
+"$BUN" /work/post.mjs "http://127.0.0.1:$GW_PORT/v1/chat/completions" "$OUT/own" >/dev/null 2>&1 || true
+OWN=$(latest_body)
+[ -n "$OWN" ] || { say "FAIL the own-tools request never reached the provider"; exit 1; }
+cp "$OWN" "$OUT/own-body.json"
+grep -q '\[m00001\]' "$OUT/own-body.json" || fail "a client that declares our tool was not served"
+
+"$BUN" /work/request.mjs --omp-tools >/tmp/req.json
+mkdir -p "$OUT/omp"
+"$BUN" /work/post.mjs "http://127.0.0.1:$GW_PORT/v1/chat/completions" "$OUT/omp" >/dev/null 2>&1 || true
+OMP=$(latest_body)
+[ -n "$OMP" ] || { say "FAIL the omp-shaped request never reached the provider"; exit 1; }
+grep -q '\[m00001\]' "$OMP" || fail "omp reaches our tools through eval, so it must be served"
+[ "$fail" -eq 0 ] && say "  ok   tool gate: our tool, or a code surface, is served"
+
 if grep -qF "$(printf 'x%.0s' $(seq 1 200))" "$OUT/upstream-body.json"; then
   say "  FAIL the folded tool result was still sent"
   fail=1
@@ -159,7 +189,7 @@ say "usage recorded from the reply"
 cp /tmp/req.json "$OUT/stream.json"
 mkdir -p "$OUT/stream-post"
 "$BUN" /work/post.mjs "http://127.0.0.1:$GW_PORT/v1/chat/completions" "$OUT/stream-post" >"$OUT/stream.resp" 2>&1 || true
-grep -qF '"stream":true' "$OUT/capture/004.body" || say "note: upstream did not see a stream request"
+grep -qF '"stream":true' "$(latest_body)" || say "note: upstream did not see a stream request"
 
 rm -rf "$OUT/stream"
 OUT="$OUT/stream" "$BUN" /work/mcp.mjs "http://127.0.0.1:$GW_PORT" magpie-acp-context_acp_status '{}' >>"$OUT/stream.log" 2>&1 || true

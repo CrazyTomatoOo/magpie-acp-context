@@ -285,6 +285,30 @@ const gemini = {
 
 const ADAPTERS = { anthropic, chat, responses, gemini };
 
+/**
+ * The tool names a request declares, in whatever shape its wire uses.
+ *
+ * `null` means the request carries no declaration list at all - an older host, a probe, a
+ * non-agent call - and the caller must not read that as "this client has no tools": only a
+ * list that is present but lacks every one of our names proves the client cannot call them.
+ */
+export function advertisedToolNames(body) {
+  const list = body?.tools;
+  if (!Array.isArray(list)) return null;
+  // Gemini nests its functions one level deeper than every other wire (`tools[0].
+  // functionDeclarations`), so a flat `tools[]` reading would report "no tools" for it.
+  const declarations = list[0]?.functionDeclarations;
+  if (Array.isArray(declarations)) {
+    return declarations.map((d) => d?.name).filter((n) => typeof n === "string" && n);
+  }
+  const names = [];
+  for (const t of list) {
+    const name = t?.name ?? t?.function?.name;
+    if (typeof name === "string" && name) names.push(name);
+  }
+  return names;
+}
+
 export function adapterFor(protocol) {
   return ADAPTERS[String(protocol || "").toLowerCase()] || null;
 }

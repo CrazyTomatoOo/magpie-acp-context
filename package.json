@@ -1,6 +1,6 @@
 {
   "name": "magpie-acp-context",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "main": "./tools.mjs",
@@ -12,7 +12,7 @@
   "magpie": {
     "hooks": "./hooks.mjs",
     "options": {
-      "enabled": false,
+      "enabled": true,
       "mode": "assist",
       "injectStyle": "append-user",
       "refFormat": "m%05d",

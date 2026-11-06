@@ -67,6 +67,8 @@ export function openSession(storeDir, key) {
   return {
     key,
     dir: p.dir,
+    /** Whether a store entry for this key was already there when it was opened. */
+    existed,
     get state() {
       return state;
     },

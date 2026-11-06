@@ -36,4 +36,13 @@ const body = {
 };
 
 if (process.argv.includes("--stream")) body.stream = true;
+// The tool gate decides on what the client DECLARES: a body that names tools but none of
+// ours is a client that can never call compress, and one that names ours can.
+if (process.argv.includes("--foreign-tools")) body.tools = [{ type: "function", function: { name: "read_file" } }];
+if (process.argv.includes("--own-tools")) body.tools = [{ type: "function", function: { name: "magpie-acp-context_compress" } }];
+// The host this plugin was written for: omp declares no MCP tool and reaches them through eval.
+if (process.argv.includes("--omp-tools")) {
+  body.tools = ["_read", "_bash", "_edit", "_eval", "_glob", "_grep", "_task", "_wait", "_todo", "web_search", "_write"]
+    .map((name) => ({ type: "function", function: { name } }));
+}
 console.log(JSON.stringify(body));

@@ -45,6 +45,53 @@ export function isCompressToolName(name) {
 
 const FENCE = /^```[a-zA-Z]*\s*|\s*```$/g;
 
+/**
+ * Whether a name belongs to this plugin at all (not just to its compress tool).
+ *
+ * Matching stays the same lenient canonical form `isCompressToolName` uses, because the
+ * wrapping differs per wire (`magpie-acp-context_compress`,
+ * `_mcp__magpie_acp_context_compress`, `mcp__magpie__magpie-acp-context_decompress`).
+ */
+export function isOwnToolName(name) {
+  const raw = String(name ?? "").toLowerCase().trim();
+  if (!raw) return false;
+  return canonical(raw).includes(`${canonical(OWN_PREFIX)}_`);
+}
+
+/**
+ * Tool names that can reach MCP tools without declaring them.
+ *
+ * A client does not have to list our tools to be able to call them: omp (the magpie lane's
+ * host) declares `read`/`bash`/`eval` and reaches every MCP tool through `eval`, so a gate
+ * that demanded our names in `tools[]` would switch compression off for exactly the client
+ * this plugin was written for. Shell and code surfaces can also POST to the gateway's own
+ * `/mcp/magpie/tools` endpoint directly.
+ */
+const EXEC_SURFACES = new Set([
+  "eval",
+  "run_code",
+  "run_command",
+  "code_interpreter",
+  "execute",
+  "exec",
+  "bash",
+  "shell",
+  "terminal",
+  "python",
+  "node",
+]);
+
+/** Whether a client declaring these tools could call this plugin's tools at all. */
+export function canCallOwnTools(names) {
+  return names.some((name) => {
+    const full = canonical(String(name ?? "").toLowerCase().trim());
+    if (!full) return false;
+    if (isOwnToolName(full)) return true;
+    if (EXEC_SURFACES.has(full)) return true;
+    return EXEC_SURFACES.has(full.replace(/^(mcp__)?[a-z0-9]+_+/, ""));
+  });
+}
+
 function stripFences(s) {
   return String(s).replace(FENCE, "").trim();
 }
