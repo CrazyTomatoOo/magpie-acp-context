@@ -79,6 +79,8 @@ const EXEC_SURFACES = new Set([
   "terminal",
   "python",
   "node",
+  "exec_command",
+  "codemode",
 ]);
 
 /** Whether a client declaring these tools could call this plugin's tools at all. */

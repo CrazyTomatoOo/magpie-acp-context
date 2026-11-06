@@ -75,6 +75,23 @@ The rule now compares on a canonical form and only requires that the plugin's ow
 somewhere in the name, so any rewrite that keeps the prefix still settles, while a foreign
 `foo_compress` is still refused. `test/compress-names.test.mjs` pins both directions.
 
+What each client actually writes, measured on a real gateway (the declaration it sends, and the
+name it will accept back):
+
+| Client | Declares our tool as | Accepts the call as |
+|---|---|---|
+| claude 2.1.318 | not at all (built-ins only, `Bash` among them) | `mcp__magpie__magpie-acp-context_compress` |
+| codex 0.166 (Responses) | a `namespace` entry `mcp__magpie` with `magpie_acp_context_compress` nested | `magpie_acp_context_compress`; the hyphenated form is rejected as an unsupported call |
+| pi 1.5 (`exposure: direct`) | `mcp__magpie__magpie_acp_context_compress` | the same underscored name; the hyphenated form is "not found" |
+| pi 1.5 (default `codemode`) | nothing — callable only from `codemode` scripts | reached through `codemode`, not by name |
+| omp | `_mcp__magpie_acp_context_compress` | the same flattened name |
+
+Two shapes are declarations, not names: codex nests an MCP server's tools under a namespace entry,
+and pi hides them behind `codemode` until a server opts into `exposure: direct`. Both made the
+"can this client call ours at all?" question answer no for a client that could — which is why the
+gate now reads nested names and counts a code surface (`eval`, `bash`, `exec_command`, `codemode`)
+as a way in.
+
 Tools run in the plugin host with Bun's full runtime (55 s cap), which is the half of ACP the
 hook cannot do: the hook sees one request and one reply under a 1 s default budget, and nothing
 it returns can inject a tool result into the stream. The client executes the tool; the result becomes an ordinary tool

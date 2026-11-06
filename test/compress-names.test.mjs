@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { compressCalls, isCompressToolName } from "../src/compress.mjs";
+import { canCallOwnTools, compressCalls, isCompressToolName } from "../src/compress.mjs";
+import { advertisedToolNames } from "../src/protocol.mjs";
 
 const ACK = "解析到 1 段;折叠会在下一次请求时按历史里真实的 ref 结算(本工具不写历史)。";
 
@@ -53,5 +54,46 @@ describe("compress tool names a real client replays", () => {
 
   test("a decompress reply is not mistaken for a compress call", () => {
     expect(compressCalls(units("mcp__magpie__magpie-acp-context_decompress"))).toHaveLength(0);
+  });
+});
+
+describe("codex CLI's namespace-shaped declaration (#15 lane probe)", () => {
+  // Measured on codex-cli 0.166 (responses wire) through a real magpie gateway: the MCP
+  // server arrives as one namespace entry and the callable names live one level down.
+  const declared = [
+    { type: "function", name: "exec_command" },
+    {
+      type: "namespace",
+      name: "mcp__magpie",
+      tools: [
+        { type: "function", name: "magpie_acp_context_compress" },
+        { type: "function", name: "magpie_acp_context_acp_status" },
+      ],
+    },
+  ];
+
+  test("the nested callable names are read, the bare namespace is not enough", () => {
+    expect(advertisedToolNames({ tools: declared })).toContain("magpie_acp_context_compress");
+    expect(canCallOwnTools(advertisedToolNames({ tools: declared }))).toBe(true);
+    expect(canCallOwnTools(advertisedToolNames({ tools: [declared[1]] }))).toBe(true);
+    expect(canCallOwnTools(advertisedToolNames({ tools: [{ type: "namespace", name: "mcp__other", tools: [] }] }))).toBe(false);
+  });
+
+  test("codex's shell tool is a way in even without our names", () => {
+    expect(canCallOwnTools(["exec_command"])).toBe(true);
+    expect(canCallOwnTools(["apply_patch", "view_image"])).toBe(false);
+  });
+
+  test("pi reaches MCP from its code surface, and names it with underscores", () => {
+    expect(canCallOwnTools(["read", "bash", "edit", "write", "codemode"])).toBe(true);
+    expect(canCallOwnTools(["codemode"])).toBe(true);
+    expect(isCompressToolName("mcp__magpie__magpie_acp_context_compress")).toBe(true);
+    expect(isCompressToolName("mcp__magpie__magpie-acp-context_compress")).toBe(true);
+  });
+
+  test("the name codex replays is the underscored plugin tool", () => {
+    expect(isCompressToolName("magpie_acp_context_compress")).toBe(true);
+    expect(isCompressToolName("mcp__magpie__magpie_acp_context_compress")).toBe(true);
+    expect(isCompressToolName("other_acp_context_compress")).toBe(false);
   });
 });

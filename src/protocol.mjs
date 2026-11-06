@@ -305,6 +305,17 @@ export function advertisedToolNames(body) {
   for (const t of list) {
     const name = t?.name ?? t?.function?.name;
     if (typeof name === "string" && name) names.push(name);
+    // Responses (codex CLI) does not declare an MCP server's tools flat: it declares the
+    // server as a namespace and nests the callable names under it -
+    // `{type:"namespace", name:"mcp__magpie", tools:[{type:"function", name:"<plugin>_<tool>"}]}`.
+    // Reading only the top level reports the namespace, not the tools, and a gate that then
+    // asks "can this client call ours?" answers no for a client that just showed us how.
+    if (Array.isArray(t?.tools)) {
+      for (const nested of t.tools) {
+        const sub = nested?.name ?? nested?.function?.name;
+        if (typeof sub === "string" && sub) names.push(sub);
+      }
+    }
   }
   return names;
 }
