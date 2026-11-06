@@ -21,20 +21,26 @@ export const COMPRESS_TOOL_NAMES = new Set([
 const OWN_PREFIX = "magpie-acp-context";
 
 /**
- * magpie serves a plugin's tools as `<plugin>_<tool>`, and each client replays the name it
- * called with ("magpie-acp-context_compress"), several wrapping it again with their own MCP
- * prefix ("mcp__magpie__magpie-acp-context_compress"). Matching only the bare names missed
- * every call a real client ever made. The prefix stays ours on purpose: another server's
- * `foo_compress` is not a call the model made to this plugin.
+ * Some wires flatten a name before it reaches the transcript (`_mcp__magpie_acp_context_compress`:
+ * leading underscore, dots and dashes folded to underscores), so the separators that identify a
+ * name are not the ones the client was given. Compare on a canonical form, keeping the rule that
+ * the plugin's own prefix must appear - another server's `foo_compress` is not our call.
  */
+const canonical = (name) => name.replace(/[-.\s]+/g, "_").replace(/^_+/, "");
+
 export function isCompressToolName(name) {
-  let full = String(name ?? "").toLowerCase().trim();
-  if (!full) return false;
-  const mcp = /^mcp__[a-z0-9_.-]+__(.+)$/.exec(full);
-  if (mcp) full = mcp[1];
+  const raw = String(name ?? "").toLowerCase().trim();
+  if (!raw) return false;
+  const full = canonical(raw);
+  const own = canonical(OWN_PREFIX);
   if (COMPRESS_TOOL_NAMES.has(full)) return true;
-  if (!full.startsWith(`${OWN_PREFIX}_`)) return false;
-  return COMPRESS_TOOL_NAMES.has(full.slice(OWN_PREFIX.length + 1));
+  // Whatever a client wraps around the served name - an MCP prefix, a flattened one - the name
+  // it wraps still sits inside, with the tool as its tail.
+  const at = full.lastIndexOf(`${own}_`);
+  if (at < 0) return false;
+  const tail = full.slice(at + own.length + 1);
+  if (COMPRESS_TOOL_NAMES.has(tail)) return true;
+  return tail.startsWith("mcp__") && isCompressToolName(tail.slice(5));
 }
 
 const FENCE = /^```[a-zA-Z]*\s*|\s*```$/g;

@@ -25,6 +25,15 @@ describe("compress tool names a real client replays", () => {
     expect(isCompressToolName("ACP_Compress")).toBe(true);
   });
 
+  test("a wire that folds dashes and dots to underscores is the same tool", () => {
+    expect(isCompressToolName("_mcp__magpie_acp_context_compress")).toBe(true);
+    expect(isCompressToolName("magpie_acp_context_compress")).toBe(true);
+    expect(isCompressToolName("_mcp__magpie__magpie_acp_context_compress")).toBe(true);
+    expect(isCompressToolName("_mcp__magpie_acp_context_decompress")).toBe(false);
+    expect(isCompressToolName("_mcp__magpie_acp_context_acp_status")).toBe(false);
+    expect(isCompressToolName("_mcp__other_acp_context_compress")).toBe(false);
+  });
+
   test("neighbouring tools and lookalikes are not a compress call", () => {
     expect(isCompressToolName("mcp__magpie__magpie-acp-context_decompress")).toBe(false);
     expect(isCompressToolName("magpie-acp-context_search_context")).toBe(false);
