@@ -8,7 +8,8 @@
  * The installed copy is what magpie placed under `<cwd>/plugins/node_modules/<pkg>`;
  * a developer checkout has none, and falls back to this package's own manifest.
  * The published-version answer is cached for a day in the store directory, so the hint costs
- * one request a day, not one per call.
+ * one request a day, not one per call; a failed check is remembered for six hours, so a dead
+ * route is not retried on every call either.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,11 +21,15 @@ const ownManifest = fileURLToPath(new URL("../package.json", import.meta.url));
 
 const CHECK_CACHE_FILE = "version-check.json";
 const CHECK_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const CHECK_BACKOFF_MS = 6 * 60 * 60 * 1000;
+const CHECK_TIMEOUT_MS = 3000;
 
 /**
  * The last successful check while it is still young enough to use: `<store>/version-check.json`,
  * holding `{latest, at}` beside the session and block files. Anything unreadable, unparsable,
- * or too old is simply no cache — the check runs afresh and the file gets rewritten.
+ * or too old is simply no cache — the check runs afresh and the file gets rewritten. A failed
+ * check is recorded in the same file as `{failedAt}` instead, holding the next attempt off
+ * for six hours (`withinFailureBackoff`).
  */
 function readCheckCache(storeDir) {
   if (!storeDir) return null;
@@ -46,6 +51,31 @@ function writeCheckCache(storeDir, latest) {
   } catch {
     // a store this plugin cannot write to costs at most the fetch we already made, never the line
   }
+}
+
+function writeFailureRecord(storeDir) {
+  if (!storeDir) return;
+  try {
+    writeFileSync(join(storeDir, CHECK_CACHE_FILE), JSON.stringify({ failedAt: Date.now() }), "utf8");
+  } catch {
+    // an unwritable store costs at most a retry on the next call, never the line
+  }
+}
+
+/**
+ * A failed check is remembered in the same file for 6 hours instead of a day: while
+ * `{failedAt}` is younger than that, the check is not retried at all, so a dead route costs
+ * one attempt per 6 hours rather than one per call.
+ */
+function withinFailureBackoff(storeDir) {
+  if (!storeDir) return false;
+  let entry;
+  try {
+    entry = JSON.parse(readFileSync(join(storeDir, CHECK_CACHE_FILE), "utf8"));
+  } catch {
+    return false;
+  }
+  return Number.isFinite(entry?.failedAt) && Date.now() - entry.failedAt < CHECK_BACKOFF_MS;
 }
 
 function readJson(file) {
@@ -125,28 +155,62 @@ function comparisonLine(own, latest) {
 }
 
 /**
+ * The abort signal asks a well-behaved fetch to stop at the budget; this deadline makes the
+ * call return even against one that ignores it, so the tool cannot hang past the budget.
+ */
+function withDeadline(promise) {
+  let timer;
+  const expired = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("version check timed out")), CHECK_TIMEOUT_MS);
+  });
+  return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * One attempt at the published version, recording the outcome in the cache file: a success is
+ * kept for 24 hours, and any failure — offline, abort, non-2xx, a body with no version in it —
+ * is recorded as a failure and returns null, so the line is absent rather than a guess.
+ */
+async function checkPublished(storeDir) {
+  let latest;
+  let failure;
+  try {
+    const res = await withDeadline(fetch(PUBLISHED_URL, { signal: AbortSignal.timeout(CHECK_TIMEOUT_MS) }));
+    if (res.ok) latest = (await res.json())?.version;
+    else failure = `HTTP ${res.status}`;
+  } catch (err) {
+    failure = err?.message ?? String(err);
+  }
+  if (typeof latest !== "string" || !latest) failure ??= "no version in the published manifest";
+  if (failure) {
+    writeFailureRecord(storeDir);
+    if (process.env.MAGPIE_ACP_DEBUG === "1") {
+      // the same switch config.mjs reads: cfg never reaches this module, and the reason
+      // belongs on the host's stderr, never in a tool result the model would echo back
+      console.error("[magpie-acp-context] version check failed:", failure);
+    }
+    return null;
+  }
+  writeCheckCache(storeDir, latest);
+  return latest;
+}
+
+/**
  * `version <own> · latest <published>` when behind the moving pointer,
  * `version <own> · local build` when ahead of anything published, plain
  * `version <own>` when current or when either version cannot be parsed — or
- * null when anything failed. One fetch a day per store: a check younger than
- * 24 h renders from the cache file, and the timeout keeps a slow network from
- * stalling the tool.
+ * null when anything failed. One fetch a day per store: a check younger than 24 h renders from
+ * the cache file, a failed check holds the next attempt off for 6 h, and the deadline keeps a
+ * slow network from stalling the tool.
  */
 export async function versionLine(cwd = process.cwd(), storeDir) {
   const own = ownVersion(cwd);
   if (!own) return null;
   let latest = readCheckCache(storeDir)?.latest;
   if (!latest) {
-    try {
-      const res = await fetch(PUBLISHED_URL, { signal: AbortSignal.timeout(3000) });
-      if (!res.ok) return null;
-      latest = (await res.json())?.version;
-    } catch {
-      return null;
-    }
-    if (typeof latest !== "string" || !latest) return null;
-    writeCheckCache(storeDir, latest);
+    if (withinFailureBackoff(storeDir)) return null;
+    latest = await checkPublished(storeDir);
+    if (!latest) return null;
   }
-  if (typeof latest !== "string" || !latest) return null;
   return comparisonLine(own, latest);
 }
