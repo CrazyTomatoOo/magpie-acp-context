@@ -58,7 +58,7 @@ to every agent at `/mcp/magpie/tools`:
 
 | MCP name | what it does |
 |---|---|
-| `<short>_compress` | parses the payload into ranges and tells the model what it wrote; the fold itself is settled by the hook on the next request |
+| `<short>_compress` | parses the payload into ranges and tells the model what it wrote; the fold itself is settled by the hook on the next request. The call is recognised however the host replays it — a bare `compress`, an MCP wrapper (`mcp__<server>__compress`), a slash namespace, a call made inside an exec script, or a generic device call naming the tool in its arguments (`write {path:"xd://…_compress"}`) |
 | `<short>_decompress` | returns the original text of a folded block, by block id or by the ref it was shown under |
 | `<short>_search_context` | substring + term-frequency search over folded originals |
 | `<short>_acp_status` | store size, one line per session (refs, folds, growth since the last fold against the nudge line, billed prompt tokens, last nudge), plus a second line when that session's last turn never landed — a provider reason that names a ceiling is quoted and says the host has to compact first; a failure with no reason (magpie forwards none, and an aborted turn looks identical) states the fact and only adds the compaction advice once the session has failed twice in a row; `{evict:true}` runs eviction |

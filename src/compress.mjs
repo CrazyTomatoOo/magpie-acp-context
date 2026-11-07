@@ -194,7 +194,12 @@ export function compressCalls(units) {
   for (const unit of units) {
     for (const call of unit.toolCalls || []) {
       const direct = isCompressToolName(call?.name);
-      const entries = direct ? parseCompressPayload(call.input) : scriptCompressCalls(call?.name, call?.input);
+      const device = direct ? null : deviceCompressPayload(call?.name, call?.input);
+      const entries = direct
+        ? parseCompressPayload(call.input)
+        : device !== null
+          ? parseCompressPayload(device)
+          : scriptCompressCalls(call?.name, call?.input);
       if (entries.length) {
         calls.push({ unitIndex: unit.index, entries, acknowledged: acknowledges(units, unit.index) });
         continue;
@@ -207,6 +212,47 @@ export function compressCalls(units) {
     }
   }
   return calls;
+}
+
+/**
+ * Some hosts route every tool through one generic device call, naming the real tool inside the
+ * arguments rather than on the wire: measured on omp 2026-11-07, a compress call is replayed as
+ * `write {path:"xd://mcp__magpie_acp_context_compress", content:"{...}"}`, so the tool name the
+ * transcript shows is `write`. Nothing on the wire says "compress" except the target, and the
+ * payload sits in the device's own argument - both are read here, and only for a target that
+ * really is our tool (a plain `write` to a file is never a fold).
+ */
+const DEVICE_TARGET_KEYS = ["path", "url", "target", "uri"];
+
+function deviceCompressPayload(name, input) {
+  if (isCompressToolName(name)) return null;
+  const args = parseJsonObject(input);
+  if (!args) return null;
+  for (const key of DEVICE_TARGET_KEYS) {
+    const target = args[key];
+    if (typeof target !== "string" || !target) continue;
+    // Only an address that points at a tool, never a filesystem path a user asked to write.
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(target) && !target.includes("/mcp/")) continue;
+    const tail = target.split(/[?#]/)[0].split("/").filter(Boolean).pop() ?? "";
+    if (!isCompressToolName(tail)) continue;
+    const payload = args.content ?? args.arguments ?? args.body ?? args.input;
+    if (payload === undefined) return "";
+    return typeof payload === "string" ? payload : JSON.stringify(payload);
+  }
+  return null;
+}
+
+function parseJsonObject(input) {
+  if (input && typeof input === "object" && !Array.isArray(input)) return input;
+  if (typeof input !== "string") return null;
+  const text = input.trim();
+  if (!text.startsWith("{")) return null;
+  try {
+    const value = JSON.parse(text);
+    return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

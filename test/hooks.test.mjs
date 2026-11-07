@@ -400,6 +400,42 @@ describe("sessions inherited from another compressor", () => {
   });
 });
 
+describe("a host that reaches MCP through its generic device call", () => {
+  // Measured on omp 2026-11-07 (the captured request body): the transcript replays a compress
+  // call as `write {path:"xd://mcp__magpie_acp_context_compress", content:"{...}"}`. The wire
+  // never names the tool, so the fold never settled in that lane while the reader looked for a
+  // call named `compress`.
+  const throughDevice = (body, { path = "xd://mcp__magpie_acp_context_compress" } = {}) => {
+    const call = body.messages.find((m) => m.tool_calls?.some((c) => c.function.name === "compress")).tool_calls[0];
+    call.function.name = "write";
+    call.function.arguments = JSON.stringify({ path, i: "折叠", content: call.function.arguments });
+    return body;
+  };
+
+  test("the fold settles", async () => {
+    const options = opts();
+    const body = throughDevice(chatHistory());
+    const out = await onRequest(structuredClone(body), ctxOf(options));
+    expect(out.messages.length).toBeLessThan(body.messages.length);
+    expect(String(out.messages[1].content).startsWith("[acp] m00002–m00004")).toBe(true);
+  });
+
+  test("a write to a file is not a fold", async () => {
+    const options = opts();
+    const body = throughDevice(chatHistory(), { path: "src/index.mjs" });
+    const out = await onRequest(structuredClone(body), ctxOf(options));
+    expect(out.messages.length).toBe(body.messages.length);
+    expect(JSON.stringify(out.messages).includes(filler(6000))).toBe(true);
+  });
+
+  test("another server's compress is not ours", async () => {
+    const options = opts();
+    const body = throughDevice(chatHistory(), { path: "xd://mcp__other__compress" });
+    const out = await onRequest(structuredClone(body), ctxOf(options));
+    expect(out.messages.length).toBe(body.messages.length);
+  });
+});
+
 describe("canary rollout", () => {
   // Replacing every window at once is the risky move this gate exists to avoid: with
   // `agents` naming one client, every other client's request leaves this hook untouched.
