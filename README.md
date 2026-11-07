@@ -181,6 +181,11 @@ The repository carries two kinds of tags and they mean different things: `magpie
 update` is enough to pick up fixes), while `vX.Y.Z` tags are immutable releases — pin one with
 `github:crazytomatooo/magpie-acp-context#v0.1.1` if you want a frozen build.
 
+A git install records the commit it resolved in the plugins folder's `bun.lock`, so removing and
+re-adding the package can reproduce the SAME build. To actually move forward: `bun pm cache rm`,
+then `bun update magpie-acp-context` inside that folder — check `bun.lock` names the new commit
+before restarting magpie.
+
 The plugin's short name is its folder name capped at 24 characters, so install it as
 `magpie-acp-context`: any shorter name renames the tools (`<short>_compress`, …).
 
