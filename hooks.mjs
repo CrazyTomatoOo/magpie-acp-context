@@ -32,7 +32,7 @@ const PROMPT = [
 ].join("");
 
 /** `foldableFrom`/`foldableTo` are refs already (`m00001`), never numbers: the note is display text. */
-export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], foreign = [], minRangeBytes = 0 }) {
+export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], foreign = [], rejected = [], minRangeBytes = 0 }) {
   const base = PROMPT;
   const parts = [
     foldableFrom == null || foldableTo == null
@@ -51,6 +51,13 @@ export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], 
     // window rule refuses). Saying so beats a silent no-op.
     parts.push(
       `历史里有 ${skipped.length} 个 compress 调用引用了本插件没有发过的 ref(${skipped.slice(0, 3).join("、")}${skipped.length > 3 ? " 等" : ""}),无法按内容结算,已跳过;请用上面给出的范围重新调用。`,
+    );
+  }
+  if (rejected.length) {
+    // Our own, resolvable call that still cannot settle: say which rule refused it, or the model
+    // keeps re-issuing the same call.
+    parts.push(
+      `上一次折叠请求没有生效:${rejected.slice(0, 3).join(";")}${rejected.length > 3 ? " 等" : ""}。按上面的条件调整范围后再调用。`,
     );
   }
   if (foreign.length) {
@@ -117,27 +124,49 @@ export function planFolds({ units, refs, session, cfg }) {
   const created = [];
   const unresolved = [];
   const foreign = [];
+  // A refused call is the quietest failure this plugin has: the tool already told the model the
+  // fold would settle next request, and then it silently does not. Every branch below that would
+  // drop a call records the reason, so the next request can say it out loud.
+  const rejected = [];
+  const windowRefs = window ? `${refs[units[window.from]?.blockId] ?? "?"}–${refs[units[window.to]?.blockId] ?? "?"}` : "";
   for (const call of compressCalls(units)) {
     if (!call.acknowledged) {
       for (const entry of call.entries) foreign.push(`${String(entry.startId).trim()}–${String(entry.endId).trim()}`);
       continue;
     }
     for (const entry of call.entries) {
+      const label = `${String(entry.startId).trim()}–${String(entry.endId).trim()}`;
       const startIndex = idToIndex.get(String(entry.startId).trim());
       const endIndex = idToIndex.get(String(entry.endId).trim());
       if (startIndex === undefined || endIndex === undefined) {
-        unresolved.push(`${String(entry.startId).trim()}–${String(entry.endId).trim()}`);
+        unresolved.push(label);
         continue;
       }
-      if (startIndex > endIndex) continue;
-      if (!units[startIndex].stampable || !units[endIndex].stampable) continue;
+      if (startIndex > endIndex) {
+        rejected.push(`${label}:起点在终点之后`);
+        continue;
+      }
+      if (!units[startIndex].stampable || !units[endIndex].stampable) {
+        rejected.push(`${label}:两端的消息不可折叠(工具调用或工具结果)`);
+        continue;
+      }
       const safe = pairSafe(units, startIndex, endIndex);
-      if (window && (safe.start < window.from || safe.end > window.to)) continue;
+      if (window && (safe.start < window.from || safe.end > window.to)) {
+        rejected.push(`${label}:超出可折叠窗口(${windowRefs}),最近的 ${Number(cfg.keepRecentTurns) || 0} 轮要留着`);
+        continue;
+      }
       const inRange = units.slice(safe.start, safe.end + 1);
       const bytes = inRange.reduce((n, u) => n + utf8Bytes(u.text), 0);
-      if (bytes < Number(cfg.minRangeBytes)) continue;
+      const floor = Number(cfg.minRangeBytes);
+      if (bytes < floor) {
+        rejected.push(`${label}:这段只有 ${bytes} 字节,低于 minRangeBytes=${floor}`);
+        continue;
+      }
       const summary = String(entry.summary || "").slice(0, Number(cfg.maxSummaryChars));
-      if (!summary.trim()) continue;
+      if (!summary.trim()) {
+        rejected.push(`${label}:摘要为空`);
+        continue;
+      }
       const startBlock = units[safe.start].blockId;
       const endBlock = units[safe.end].blockId;
       created.push({
@@ -153,7 +182,7 @@ export function planFolds({ units, refs, session, cfg }) {
       });
     }
   }
-  return { created, window, unresolved: [...new Set(unresolved)], foreign: [...new Set(foreign)] };
+  return { created, window, unresolved: [...new Set(unresolved)], foreign: [...new Set(foreign)], rejected: [...new Set(rejected)] };
 }
 
 /**
@@ -233,8 +262,8 @@ export async function onRequest(body, ctx) {
     for (let i = 0; i < units.length; i += 1) units[i].blockId = ids[i];
     for (let i = 0; i < units.length; i += 1) units[i].ref = refs[ids[i]];
 
-    const { created, window, unresolved, foreign } = planFolds({ units, refs, session, cfg });
-    if (cfg.debug) console.error("[magpie-acp-context] plan", JSON.stringify({ window, created: created.length, unresolved, foreign, folds: session.folds().length }));
+    const { created, window, unresolved, foreign, rejected } = planFolds({ units, refs, session, cfg });
+    if (cfg.debug) console.error("[magpie-acp-context] plan", JSON.stringify({ window, created: created.length, unresolved, foreign, rejected, folds: session.folds().length }));
     if (created.length) {
       session.withLock(() => session.recordFolds(created, ({ blockId, role, text }) => session.storeOriginal(blockId, { role, text, ref: refs[blockId], at: Date.now() })));
     }
@@ -313,6 +342,7 @@ export async function onRequest(body, ctx) {
         nudge,
         skipped: unresolved,
         foreign,
+        rejected,
         minRangeBytes: cfg.minRangeBytes,
       });
       if (cfg.injectStyle === "system-suffix") adapter.appendSystem(next, note);

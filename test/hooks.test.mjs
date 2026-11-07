@@ -499,3 +499,40 @@ describe("folds a real client actually sends", () => {
   });
 });
 
+describe("a fold that cannot settle says why", () => {
+  test("a range under the floor is reported, not silently dropped", async () => {
+    const body = {
+      model: "x",
+      messages: [
+        { role: "user", content: filler(20) },
+        { role: "assistant", content: "ok" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "c1",
+              type: "function",
+              function: { name: "magpie-acp-context_compress", arguments: JSON.stringify({ content: "m00001–m00001 小段\n摘要正文。" }) },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "c1", content: `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。` },
+        { role: "user", content: "继续" },
+      ],
+    };
+    const out = await onRequest(structuredClone(body), ctxOf(opts({ minRangeBytes: 5000 })));
+    const note = JSON.stringify(out.messages);
+    expect(note).toContain("上一次折叠请求没有生效");
+    expect(note).toContain("低于 minRangeBytes=5000");
+  });
+
+  test("nothing refused means the note stays quiet about refusals", async () => {
+    const out = await onRequest(
+      { model: "x", messages: [{ role: "user", content: "你好" }, { role: "assistant", content: "在" }, { role: "user", content: "继续" }] },
+      ctxOf(opts()),
+    );
+    expect(JSON.stringify(out.messages)).not.toContain("上一次折叠请求没有生效");
+  });
+});
+
