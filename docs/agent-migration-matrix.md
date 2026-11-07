@@ -135,11 +135,25 @@ bili 用三种手段压住客户端压缩(§1 第 3 行),magpie 一个都不做(
 
 - 客户端自己的压缩时机与内容(我们不写宿主配置);
 - bili 的 msgId 级增量车道与分叉血缘(我们按内容哈希;分叉的旧分支会被当成新块,不会错折叠);
-- pi / omp / codex 是否发会话头,只能上线前用验收第 2 条实测。
+- pi / codex 是否发会话头未逐条验证;omp 已实测发(store 键是宿主 UUID),dsh 实测不发(键退化成 `dsh|`)。
 
-## 9. 未验证项
+## 9. 实测结果(真机,非源码推断)
 
-- 本机真实流量只跑过 omp(386 个会话);其余五个宿主的结论来自源码,没有抓包。
-- pi / omp / codex 实际发出的会话头未验证(§4 已标注)。
-- opencode `compaction.auto` 恢复后的具体行为未实测。
-- dsh 的 `x-deepseek-harness-compact` 我们确实读不到(magpie hooks 的 `ctx` 不含请求头),但"读不到会怎样"只在源码层推断。
+判定口径只有两条:**折叠真的结算了**(store 里有 fold 记录、原文可取回),以及**宿主是怎么把调用交上来的**(线上形态决定我们要不要多认一种写法)。全部在 `0.3.2` 上跑。
+
+| 宿主 | 线 | 会话键 | 调用形态 | 结果 |
+|---|---|---|---|---|
+| omp | chat | 宿主自己的 UUID(有会话头) | 重放成设备调用 `write {path:"xd://mcp__magpie_acp_context_compress"}` | ✅ 本会话 `folds` 多条,最大一次 m00422–m00709 252,523 字节 |
+| codex | responses | 宿主会话 id | 原生 MCP 工具名,可直接读 | ✅ 一次 `created:1` 折 m00001 5,037 字节;一次被 5,000 字节下限拒(正常) |
+| omo | chat | 宿主会话 id | 原生 MCP 工具名 | ✅ 折 m00001–m00003 共 8,267 字节,原文 `decompress` 可取回 |
+| opencode | chat | 宿主会话 id | exec 脚本 `tools[...].compress` | ⏳ 见下 |
+| claude | anthropic | 宿主会话 id | 原生 `mcp__magpie-acp-context__compress` | ⏳ 见下 |
+| dsh | chat | **无会话头**,退化成 `dsh\|` | ⏳ 见下 | ⏳ 见下 |
+
+三条与源码推断不同的实测结论:
+
+1. **omp 在线上根本没有工具名**。它把 MCP 调用重放成「往 `xd://<tool>` 写 JSON」的设备调用,所以任何按工具名单匹配的实现都认不出。已在 `deviceCompressPayload` 里认这种形态(目标 scheme 是 `xd://` 或含 `/mcp/`、末段过工具名判定、载荷取设备的 `content`;写普通文件与别家 `compress` 不算)。
+2. **omp 确实发会话头**(store 键是宿主 UUID),`pi / omp / codex 是否发会话头` 这条疑虑对 omp 已解除;dsh 明确不发,键退化成 `dsh|`。
+3. **codex 的默认审批策略会静默吃掉 MCP 调用**(`never` 下直接拒),表现为「模型想折但没折」。验收 codex 车道时必须带 `--dangerously-bypass-approvals-and-sandbox`。
+
+仍未实测:`opencode compaction.auto` 恢复后的行为;dsh 的 `x-deepseek-harness-compact` 我们确实读不到(magpie hooks 的 `ctx` 不含请求头)。

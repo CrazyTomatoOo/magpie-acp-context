@@ -203,6 +203,32 @@ export function planFolds({ units, refs, session, cfg }) {
       const b = idToIndex.get(fold.endRef);
       return a !== undefined && b !== undefined && startIndex >= a && endIndex <= b;
     });
+  const coveringFoldOf = (index) =>
+    settled.find((fold) => {
+      const a = idToIndex.get(fold.startRef);
+      const b = idToIndex.get(fold.endRef);
+      return a !== undefined && b !== undefined && index >= a && index <= b;
+    });
+  // The note must never advertise a start that a settled fold already covers: a model that folds
+  // the advertised range again produces a nested summary, which liveRanges then drops as an
+  // overlap — the work is lost and the next note advertises the same stale start (measured
+  // 2026-11-07 in this session: covered m00387–m00709 was still advertised as the fold start).
+  // Holes stay foldable: the first index past every covering span, not past the newest fold.
+  const firstUncoveredFrom = (from, to) => {
+    let i = from;
+    while (i <= to) {
+      const cover = coveringFoldOf(i);
+      if (!cover) return i;
+      i = Number(idToIndex.get(cover.endRef)) + 1;
+    }
+    return to + 1;
+  };
+  const foldable = window
+    ? (() => {
+        const from = firstUncoveredFrom(window.from, window.to);
+        return from <= window.to ? { from, to: window.to } : null;
+      })()
+    : null;
   for (const call of compressCalls(units)) {
     if (settledEnd !== undefined && call.unitIndex < settledEnd) continue;
     if (call.unreadable) {
@@ -240,6 +266,12 @@ export function planFolds({ units, refs, session, cfg }) {
       }
       if (coveredBySettled(startIndex, endIndex)) continue;
       const safe = pairSafe(units, startIndex, endIndex);
+      const cover = coveringFoldOf(safe.start);
+      if (cover !== undefined) {
+        const coverEnd = Number(idToIndex.get(cover.endRef));
+        rejected.push(`${label}:起点落在已结算的折叠 ${cover.startRef}–${cover.endRef} 里,请从 ${refs[units[coverEnd + 1]?.blockId] ?? "该折叠之后"} 开始`);
+        continue;
+      }
       if (window && (safe.start < window.from || safe.end > windowEnd)) {
         rejected.push(`${label}:超出可折叠窗口(${windowRefs}),最近的 ${Number(cfg.keepRecentTurns) || 0} 轮要留着`);
         continue;
@@ -280,7 +312,7 @@ export function planFolds({ units, refs, session, cfg }) {
     }
   }
   const unrecognized = unknownShapes(units, compressCalls(units));
-  return { created, window, unresolved: [...new Set(unresolved)], foreign: [...new Set(foreign)], rejected: [...new Set(rejected)], unrecognized: [...new Set(unrecognized)] };
+  return { created, window, foldable, unresolved: [...new Set(unresolved)], foreign: [...new Set(foreign)], rejected: [...new Set(rejected)], unrecognized: [...new Set(unrecognized)] };
 }
 
 /**
@@ -375,8 +407,8 @@ export async function onRequest(body, ctx) {
     for (let i = 0; i < units.length; i += 1) units[i].blockId = ids[i];
     for (let i = 0; i < units.length; i += 1) units[i].ref = refs[ids[i]];
 
-    const { created, window, unresolved, foreign, rejected, unrecognized } = planFolds({ units, refs, session, cfg });
-    if (cfg.debug) console.error("[magpie-acp-context] plan", JSON.stringify({ session: sessionKeyOf(ctx), units: units.length, calls: compressCalls(units).length, window, created: created.length, unresolved, foreign, rejected, unrecognized, folds: session.folds().length }));
+    const { created, window, foldable, unresolved, foreign, rejected, unrecognized } = planFolds({ units, refs, session, cfg });
+    if (cfg.debug) console.error("[magpie-acp-context] plan", JSON.stringify({ session: sessionKeyOf(ctx), units: units.length, calls: compressCalls(units).length, window, foldable, created: created.length, unresolved, foreign, rejected, unrecognized, folds: session.folds().length }));
     if (created.length) {
       session.withLock(() => session.recordFolds(created, ({ blockId, role, text }) => session.storeOriginal(blockId, { role, text, ref: refs[blockId], at: Date.now() })));
     }
@@ -409,7 +441,7 @@ export async function onRequest(body, ctx) {
             {
               since: decision.since,
               growthFloor: decision.growthFloor,
-              range: window ? `${units[window.from]?.ref}–${units[window.to]?.ref}` : "",
+              range: foldable ? `${units[foldable.from]?.ref}–${units[foldable.to]?.ref}` : "",
             },
             cfg,
           )
@@ -453,8 +485,8 @@ export async function onRequest(body, ctx) {
 
     if (cfg.mode !== "render") {
       const note = buildNote({
-        foldableFrom: window ? units[window.from]?.ref : null,
-        foldableTo: window ? units[window.to]?.ref : null,
+        foldableFrom: foldable ? units[foldable.from]?.ref : null,
+        foldableTo: foldable ? units[foldable.to]?.ref : null,
         nudge,
         skipped: unresolved,
         foreign,

@@ -488,6 +488,39 @@ describe("a range a settled fold already covers", () => {
   });
 });
 
+describe("the range the note advertises", () => {
+  // Measured 2026-11-07 on this very session: after the window's whole span had settled, the note
+  // kept advertising that same span as foldable. Re-folding it makes a nested summary that
+  // liveRanges drops as an overlap — the model's work vanishes and the note never advances.
+  const wholeWindow = "m00001–m00004 整段开局\n用户要求读文件并总结,已完成,细节不必逐字保留,知道结论就够。";
+
+  test("a span a settled fold covers is not advertised as foldable", async () => {
+    const options = opts();
+    const body = chatHistory({ compress: wholeWindow });
+    await onRequest(structuredClone(body), ctxOf(options));
+    const after = await onRequest(structuredClone(body), ctxOf(options));
+    const note = String(after.messages.at(-1).content);
+    expect(note).not.toContain("当前可以折叠的范围是 m00001–m00004");
+    expect(
+      JSON.parse(readFileSync(join(options.store.dir, "sessions", "s1.json"), "utf8")).folds,
+    ).toHaveLength(1);
+  });
+
+  test("a range that starts inside a settled fold is refused, not nested", async () => {
+    const options = opts();
+    const body = chatHistory({ compress: wholeWindow });
+    await onRequest(structuredClone(body), ctxOf(options));
+    await onRequest(structuredClone(body), ctxOf(options));
+    const wider = chatHistory({ compress: "m00001–m00005 更宽的开局\n从第一句话一直到用户说把细节压掉,全部压成一句。" });
+    await onRequest(structuredClone(wider), ctxOf(options));
+    const seen = await onRequest(structuredClone(wider), ctxOf(options));
+    expect(String(seen.messages.at(-1).content)).toContain("起点落在已结算的折叠");
+    expect(
+      JSON.parse(readFileSync(join(options.store.dir, "sessions", "s1.json"), "utf8")).folds,
+    ).toHaveLength(1);
+  });
+});
+
 describe("an answer quoted back through another tool", () => {
   // Measured 2026-11-07 in this plugin's own dogfood session: a `bash` result that printed a tool
   // result carrying our ack was read as "the host replayed the call as bash" and the note said a
