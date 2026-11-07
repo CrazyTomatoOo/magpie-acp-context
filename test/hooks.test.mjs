@@ -488,6 +488,31 @@ describe("a range a settled fold already covers", () => {
   });
 });
 
+describe("an answer quoted back through another tool", () => {
+  // Measured 2026-11-07 in this plugin's own dogfood session: a `bash` result that printed a tool
+  // result carrying our ack was read as "the host replayed the call as bash" and the note said a
+  // fold would never settle - about a fold that had already settled. Only a tool result that
+  // OPENS with our count is ours.
+  test("is not reported as an unknown shape", async () => {
+    const options = opts();
+    const body = {
+      model: "x",
+      messages: [
+        { role: "user", content: "看一下日志。" },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{ id: "c1", type: "function", function: { name: "bash", arguments: '{"command":"grep -r 解析到 log"}' } }],
+        },
+        { role: "tool", tool_call_id: "c1", content: `--- 120 tool "解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。"` },
+        { role: "user", content: "继续" },
+      ],
+    };
+    const out = await onRequest(structuredClone(body), ctxOf(options));
+    expect(String(out.messages.at(-1).content)).not.toContain("读不出对应的调用");
+  });
+});
+
 describe("a device call whose payload is not a range", () => {
   test("names the target so the shape is visible in one line", async () => {
     const options = opts();
