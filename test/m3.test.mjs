@@ -281,6 +281,15 @@ describe("a refused turn", () => {
     expect(status).toContain("先在宿主里压缩一次");
   });
 
+  test("a failed turn with no body says what is known and what it would mean", async () => {
+    const dir = store();
+    await onRequest(chatHistory(), ctx(dir));
+    await onResponse(null, ctx(dir, { success: false }));
+    const status = renderStatus(scanStore(dir));
+    expect(status).toContain("没有附带原因");
+    expect(status).toContain("先在宿主里压缩一次");
+  });
+
   test("does not blame the window for a refusal that is not about size", async () => {
     const dir = store();
     await onRequest(chatHistory(), ctx(dir));

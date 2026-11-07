@@ -241,10 +241,15 @@ export { cleanup };
 export function refusalLine(refusal) {
   const num = (n) => Number(n ?? 0).toLocaleString("en-US");
   const when = refusal.at ? new Date(refusal.at).toISOString().slice(0, 16).replace("T", " ") : "";
-  const why = refusal.text || "上游没有在回复里附原因";
-  const head = `上游拒绝了上一次请求${when ? `(${when})` : ""}:${why}`;
+  const mine = refusal.tokens ? `本轮 ≈${num(refusal.tokens)} tokens` : "";
+  // magpie forwards no reason on a failed turn, so most refusals arrive with an empty body: say
+  // what is known and what it would mean, rather than inventing a cause.
+  if (!refusal.text) {
+    return `上游拒绝了上一次请求${when ? `(${when})` : ""},没有附带原因;${mine || "本轮大小未知"}。若这是上下文上限,折叠救不了这一轮 —— 请求在模型看到提示之前就被拒了,先在宿主里压缩一次(compaction)再继续。`;
+  }
+  const head = `上游拒绝了上一次请求${when ? `(${when})` : ""}:${refusal.text}`;
   if (!refusal.contextLimit) return `${head}。`;
   const ceiling = refusal.limit ? ` 上限约 ${num(refusal.limit)} tokens` : "";
-  const mine = refusal.tokens ? `,本轮 ≈${num(refusal.tokens)} tokens` : "";
-  return `${head}。${ceiling}${mine};折叠救不了这一轮 —— 请求在模型看到提示之前就被拒了,先在宿主里压缩一次(compaction),再继续。`;
+  const here = refusal.tokens ? `,本轮 ≈${num(refusal.tokens)} tokens` : "";
+  return `${head}。${ceiling}${here};折叠救不了这一轮 —— 请求在模型看到提示之前就被拒了,先在宿主里压缩一次(compaction),再继续。`;
 }

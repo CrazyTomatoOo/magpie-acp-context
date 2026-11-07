@@ -472,11 +472,7 @@ export async function onResponse(reply, ctx) {
         });
         session.save();
       });
-      if (cfg.debug) {
-        console.error("[magpie-acp-context] refused:", refusal.text || "(no reason in the body)");
-        const safe = (v) => { try { return JSON.stringify(v ?? null)?.slice(0, 300) ?? "undefined"; } catch { return "<unserializable>"; } };
-        for (const k of Object.keys(ctx || {})) console.error("[magpie-acp-context] ctx", k, safe(ctx[k]));
-      }
+      if (cfg.debug) console.error("[magpie-acp-context] refused:", refusal.text || "(the gateway forwards no reason on a failed turn)", "size≈", refusal.tokens ?? 0);
       return;
     }
     session.withLock(() => {
