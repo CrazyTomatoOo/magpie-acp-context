@@ -138,6 +138,16 @@ describe("codex CLI's namespace-shaped declaration (#15 lane probe)", () => {
     expect(isCompressToolName("mcp__magpie__magpie-acp-context_compress")).toBe(true);
   });
 
+  test("opencode\'s execute tool reaches the server through an index", () => {
+    const script = 'const r = await tools["magpie-acp-context"].compress({content: `m00001–m00003 填充\n这段历史是启动阶段的填充文本,结论已记下,不需要原文。`}); text(r)';
+    const read = (input) =>
+      compressCalls([{ index: 0, role: "assistant", blockId: "b1", text: "", toolCalls: [{ name: "execute", input }] }]);
+    expect(read({ code: script })[0].entries[0].summary).toContain("启动阶段的填充文本");
+    expect(read(script)[0].entries[0].startId).toBe("m00001");
+    const computed = script.replace("这段历史是启动阶段的填充文本,结论已记下,不需要原文。", "${rows.map((r) => r.text).join()}"); 
+    expect(read({ code: computed })[0]).toMatchObject({ entries: [], unreadable: true });
+  });
+
   test("the name codex replays is the underscored plugin tool", () => {
     expect(isCompressToolName("magpie_acp_context_compress")).toBe(true);
     expect(isCompressToolName("mcp__magpie__magpie_acp_context_compress")).toBe(true);

@@ -219,12 +219,15 @@ export function compressCalls(units) {
  */
 function scriptCompressCalls(name, input) {
   if (!EXEC_SURFACES.has(canonical(String(name ?? "")))) return [];
-  const text = String(input ?? "");
+  // opencode reaches the servers through an index (measured 2026-11-07:
+  // `tools["magpie-acp-context"].compress({...})`), so fold that spelling into the dotted
+  // one before matching - the argument parser below is the part that has to stay honest.
+  const text = scriptText(input);
   const out = [];
-  const re = /tools\s*\.\s*([A-Za-z0-9_$.]+)\s*\(/g;
+  const re = /tools\s*\.\s*([A-Za-z0-9_$.-]+)\s*\(/g;
   let match;
   while ((match = re.exec(text)) !== null) {
-    if (!isCompressToolName(match[1].split(".").pop())) continue;
+    if (!isCompressToolName(match[1]) && !isCompressToolName(match[1].split(".").pop())) continue;
     const args = parenthesized(text, re.lastIndex - 1);
     if (args === null) continue;
     const content = contentArgument(args);
@@ -236,7 +239,18 @@ function scriptCompressCalls(name, input) {
 
 function scriptMentionsOurTool(name, input) {
   if (!EXEC_SURFACES.has(canonical(String(name ?? "")))) return false;
-  return /tools\s*\.\s*[A-Za-z0-9_$.]*compress/i.test(String(input ?? ""));
+  return /tools\s*\.\s*[A-Za-z0-9_$.-]*compress/i.test(scriptText(input));
+}
+
+/**
+ * The program a host handed over: codex sends the script as a string (custom_tool_call),
+ * opencode sends the call's arguments object (its `execute` takes {code}), and opencode
+ * reaches the servers through an index (`tools["magpie-acp-context"].compress(...)`), which
+ * is folded into the dotted spelling here so one matcher serves both.
+ */
+function scriptText(input) {
+  const raw = input && typeof input === "object" ? (input.code ?? input.script ?? input.source ?? JSON.stringify(input)) : input;
+  return String(raw ?? "").replace(/tools\s*\[\s*(["'])([^"']+)\1\s*\]/g, "tools.$2");
 }
 
 /** The text between the parens that open at `openIndex`, honouring string literals. */
@@ -277,7 +291,7 @@ function contentArgument(args) {
 
 function stringLiteral(text) {
   const quote = text[0];
-  if (quote !== '"' && quote !== "'") return null;
+  if (quote !== '"' && quote !== "'" && quote !== "`") return null;
   let i = 1;
   while (i < text.length) {
     const ch = text[i];
@@ -294,11 +308,20 @@ function stringLiteral(text) {
           return null;
         }
       }
+      // A template literal is a literal only while nothing is interpolated: `${...}` is
+      // computed, and a computed summary is exactly what must never be guessed.
+      if (quote === "`") return raw.includes("${") ? null : decodeTemplate(raw);
       return singleQuoted(raw);
     }
     i += 1;
   }
   return null;
+}
+
+/** A template literal carries the same escapes as a single-quoted one, minus interpolation. */
+function decodeTemplate(raw) {
+  const body = raw.slice(1, -1);
+  return body.replace(/\\(.)/g, (_, ch) => (ch === "n" ? "\n" : ch === "t" ? "\t" : ch === "r" ? "\r" : ch));
 }
 
 /** Single-quoted literals are not JSON; decode only the escapes that cannot change the text. */
