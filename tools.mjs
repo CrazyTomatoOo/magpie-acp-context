@@ -67,10 +67,14 @@ function compressTool(cfg) {
         const ok = bytes <= cfg.maxSummaryChars;
         return `${r.startId}–${r.endId} ${r.topic ? `「${r.topic}」` : ""}摘要 ${num(bytes)} 字节${ok ? "" : `(超过 maxSummaryChars=${num(cfg.maxSummaryChars)},会被截断)`}`;
       });
+      const floor = Number(cfg.minRangeBytes);
       return [
         `解析到 ${ranges.length} 段;${COMPRESS_ACK}(本工具不写历史)。`,
+        floor > 0
+          ? `一次折叠覆盖的原文至少 ${num(floor)} 字节(约 ${num(Math.round(floor / 2.5))} tokens);不够的先留在历史里,攒够了再折。`
+          : "",
         ...lines,
-      ].join("\n");
+      ].filter(Boolean).join("\n");
     },
   };
 }

@@ -53,6 +53,19 @@ describe("tools", () => {
     expect(out).toContain("m00007–m00009 「部署」");
   });
 
+  test("compress states the floor a range has to clear", async () => {
+    const tool = (await toolsFor({ store: { dir: store() }, minRangeBytes: 5000 })).compress;
+    const out = await tool.execute({ content: "m00002–m00005 早期需求\n用户要求读文件。" });
+    expect(out).toContain("至少 5,000 字节");
+    expect(out).toContain("约 2,000 tokens");
+  });
+
+  test("no floor configured means the reply stays quiet about one", async () => {
+    const tool = (await toolsFor({ store: { dir: store() }, minRangeBytes: 0 })).compress;
+    const out = await tool.execute({ content: "m00002–m00005 早期需求\n用户要求读文件。" });
+    expect(out).not.toContain("一次折叠覆盖的原文至少");
+  });
+
   test("compress refuses text that holds no range", async () => {
     const tool = (await toolsFor({ store: { dir: store() } })).compress;
     expect(await tool.execute({ content: "随便写点什么都行" })).toContain("没有解析到范围");

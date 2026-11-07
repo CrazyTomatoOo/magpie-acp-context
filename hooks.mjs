@@ -32,13 +32,20 @@ const PROMPT = [
 ].join("");
 
 /** `foldableFrom`/`foldableTo` are refs already (`m00001`), never numbers: the note is display text. */
-export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], foreign = [] }) {
+export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], foreign = [], minRangeBytes = 0 }) {
   const base = PROMPT;
   const parts = [
     foldableFrom == null || foldableTo == null
       ? base
       : `${base}当前可以折叠的范围是 ${foldableFrom}–${foldableTo}。`,
   ];
+  // A call under the floor is not an error, it is a no-op: the range stays put and nothing
+  // settles. Saying the number up front is cheaper than the model discovering it per call.
+  if (Number(minRangeBytes) > 0) {
+    parts.push(
+      `一次折叠覆盖的原文至少 ${Number(minRangeBytes)} 字节(约 ${Math.round(Number(minRangeBytes) / 2.5)} tokens);不够的先留在历史里,攒够了再折。`,
+    );
+  }
   if (skipped.length) {
     // Our own call whose range we cannot resolve (a ref we never issued, or a range the
     // window rule refuses). Saying so beats a silent no-op.
@@ -306,6 +313,7 @@ export async function onRequest(body, ctx) {
         nudge,
         skipped: unresolved,
         foreign,
+        minRangeBytes: cfg.minRangeBytes,
       });
       if (cfg.injectStyle === "system-suffix") adapter.appendSystem(next, note);
       else adapter.appendNote(next, note);
