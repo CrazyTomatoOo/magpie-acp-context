@@ -335,7 +335,7 @@ export async function onRequest(body, ctx) {
     for (let i = 0; i < units.length; i += 1) units[i].ref = refs[ids[i]];
 
     const { created, window, unresolved, foreign, rejected } = planFolds({ units, refs, session, cfg });
-    if (cfg.debug) console.error("[magpie-acp-context] plan", JSON.stringify({ session: sessionKeyOf(ctx), units: units.length, calls: compressCalls(units).length, window, created: created.length, unresolved, foreign, rejected, folds: session.folds().length }));
+    if (cfg.debug) console.error("[magpie-acp-context] plan", JSON.stringify({ session: sessionKeyOf(ctx), units: units.length, calls: compressCalls(units).length, toolNames: [...new Set(units.flatMap((u) => (u.toolCalls || []).map((c) => String(c?.name ?? "?"))))].slice(0, 12), window, created: created.length, unresolved, foreign, rejected, folds: session.folds().length }));
     if (created.length) {
       session.withLock(() => session.recordFolds(created, ({ blockId, role, text }) => session.storeOriginal(blockId, { role, text, ref: refs[blockId], at: Date.now() })));
     }
