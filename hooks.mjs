@@ -194,6 +194,15 @@ export function planFolds({ units, refs, session, cfg }) {
   // the range had been folded successfully).
   const settled = session.folds();
   const settledEnd = settled.length ? idToIndex.get(settled[settled.length - 1].endRef) : undefined;
+  // A range that a settled fold already covers needs nothing more: re-folding it with a second
+  // summary would replace the same span twice, and re-reporting its refusal is noise. Ranges can
+  // leave this window (the client truncates), so coverage is matched against the folds we own.
+  const coveredBySettled = (startIndex, endIndex) =>
+    settled.some((fold) => {
+      const a = idToIndex.get(fold.startRef);
+      const b = idToIndex.get(fold.endRef);
+      return a !== undefined && b !== undefined && startIndex >= a && endIndex <= b;
+    });
   for (const call of compressCalls(units)) {
     if (settledEnd !== undefined && call.unitIndex < settledEnd) continue;
     if (call.unreadable) {
@@ -229,6 +238,7 @@ export function planFolds({ units, refs, session, cfg }) {
         rejected.push(`${label}:两端的消息不可折叠(工具调用或工具结果)`);
         continue;
       }
+      if (coveredBySettled(startIndex, endIndex)) continue;
       const safe = pairSafe(units, startIndex, endIndex);
       if (window && (safe.start < window.from || safe.end > windowEnd)) {
         rejected.push(`${label}:超出可折叠窗口(${windowRefs}),最近的 ${Number(cfg.keepRecentTurns) || 0} 轮要留着`);

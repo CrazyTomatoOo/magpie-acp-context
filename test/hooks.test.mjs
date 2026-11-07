@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { onRequest, onResponse } from "../hooks.mjs";
@@ -452,6 +452,39 @@ describe("a refusal that has been superseded", () => {
     const body = chatHistory({ compress: "m00002–m00004 早期需求\n太短" });
     const out = await onRequest(structuredClone(body), ctxOf(options));
     expect(String(out.messages.at(-1).content)).toContain("上一次折叠请求没有生效");
+  });
+});
+
+describe("a range a settled fold already covers", () => {
+  // Measured 2026-11-07 on the omp lane: after m00387–m00421 folded, the earlier 28-byte attempt
+  // for the same span kept announcing its refusal every turn, and a second call would have folded
+  // the same span twice.
+  const twice = (secondSummary) => {
+    const body = chatHistory();
+    const first = body.messages.find((m) => m.tool_calls?.some((c) => c.function.name === "compress"));
+    const result = { role: "tool", tool_call_id: "call_2", content: `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。` };
+    body.messages.push(
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [{ id: "call_3", type: "function", function: { name: "compress", arguments: JSON.stringify({ content: secondSummary }) } }],
+      },
+      { ...result, tool_call_id: "call_3" },
+      { role: "user", content: "继续" },
+    );
+    expect(first).toBeTruthy();
+    return body;
+  };
+
+  test("a later attempt on the same span is neither re-folded nor re-reported", async () => {
+    const options = opts();
+    const body = twice("m00002–m00004 早期需求\n太短");
+    await onRequest(structuredClone(body), ctxOf(options));
+    const after = await onRequest(structuredClone(body), ctxOf(options));
+    const note = String(after.messages.at(-1).content);
+    expect(note).not.toContain("上一次折叠请求没有生效");
+    const session = JSON.parse(readFileSync(join(options.store.dir, "sessions", "s1.json"), "utf8"));
+    expect(session.folds).toHaveLength(1);
   });
 });
 

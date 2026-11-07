@@ -232,11 +232,16 @@ export function compressCalls(units) {
  * knows - and that shape has to be named, because the alternative is the failure mode measured on
  * omp 2026-11-07: 491 refs, a tool answering "解析到 1 段" every time, and not one fold settled.
  */
+const ACK_AT_START = /^解析到\s*\d+\s*段/;
+
 export function unknownShapes(units, calls) {
   const settled = new Set(calls.filter((c) => c.entries.length > 0).map((c) => c.unitIndex));
   const shapes = [];
   for (let at = 0; at < units.length; at += 1) {
-    if (!String(units[at]?.text || "").includes(COMPRESS_ACK)) continue;
+    // Our reply opens with the count of ranges it parsed. A transcript that merely *quotes* our
+    // answer (a log read back through a shell, a pasted tool result) is not a call: measured
+    // 2026-11-07, a bash result echoing the ack produced a phantom "host replayed it as bash".
+    if (!ACK_AT_START.test(String(units[at]?.text || "").trimStart())) continue;
     const names = [];
     for (let back = at - 1; back >= 0 && back >= at - 4; back -= 1) {
       const calls_ = units[back]?.toolCalls || [];
