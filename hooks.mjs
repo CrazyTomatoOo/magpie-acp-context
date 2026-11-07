@@ -30,7 +30,7 @@ import { estimateBodyTokens, readRefusal, readUsage } from "./src/usage.mjs";
 // wasted turn for it: measured 2026-11-07, a note promising startRef/endRef/topic/summary sent a
 // model into exactly that.
 const PROMPT = [
-  "[acp] 每条历史消息前的 [mNNNNN] 是它的 ref。",
+  "[acp] 每条历史消息前的 [mNNNNN] 是它的 ref,只在指代某条历史时写;不要给你的回复加这种前缀。",
   "要把一段旧历史折成摘要时,调用 compress 工具,参数 content 写成:",
   "第一行 `m00002–m00005 主题`,紧接的下一行是这一段的中文摘要(至少 40 字节);",
   "多段之间用空行分隔。摘要要写成普通字符串字面量,不要用变量拼接。",

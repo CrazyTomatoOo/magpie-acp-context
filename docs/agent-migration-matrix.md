@@ -147,13 +147,14 @@ bili 用三种手段压住客户端压缩(§1 第 3 行),magpie 一个都不做(
 | codex | responses | 宿主会话 id | 原生 MCP 工具名,可直接读 | ✅ 一次 `created:1` 折 m00001 5,037 字节;一次被 5,000 字节下限拒(正常) |
 | omo | chat | 宿主会话 id | 原生 MCP 工具名 | ✅ 折 m00001–m00003 共 8,267 字节,原文 `decompress` 可取回 |
 | opencode | chat | 宿主会话 id | exec 脚本 `tools[...].compress` | ⏳ 见下 |
-| claude | anthropic | 宿主会话 id | 原生 `mcp__magpie-acp-context__compress` | ⏳ 见下 |
-| dsh | chat | **无会话头**,退化成 `dsh\|` | ⏳ 见下 | ⏳ 见下 |
+| claude | anthropic | 宿主会话 id(`x-claude-code-session-id`) | 原生 `mcp__magpie-acp-context__compress` | ✅ 6 轮 `--resume` 探针,折 m00001–m00013:原文 142,047 字节 → 摘要 502 字节(会话 35 units / 281,074 字节) |
+| dsh(headless)| chat | **无会话头**,退化成 `dsh\|`(所有 dsh 会话共用一个 ref 空间) | 原生 MCP 工具名,可直接读 | ✅ 5 轮探针,末轮折 m00016–m00022:原文 15,321 字节 → 摘要 1,149 字节;首次只写 m00016–m00017(626 字节)被下限拒,模型自己看到拒因后改正 |
 
-三条与源码推断不同的实测结论:
+四条与源码推断不同的实测结论:
 
 1. **omp 在线上根本没有工具名**。它把 MCP 调用重放成「往 `xd://<tool>` 写 JSON」的设备调用,所以任何按工具名单匹配的实现都认不出。已在 `deviceCompressPayload` 里认这种形态(目标 scheme 是 `xd://` 或含 `/mcp/`、末段过工具名判定、载荷取设备的 `content`;写普通文件与别家 `compress` 不算)。
 2. **omp 确实发会话头**(store 键是宿主 UUID),`pi / omp / codex 是否发会话头` 这条疑虑对 omp 已解除;dsh 明确不发,键退化成 `dsh|`。
 3. **codex 的默认审批策略会静默吃掉 MCP 调用**(`never` 下直接拒),表现为「模型想折但没折」。验收 codex 车道时必须带 `--dangerously-bypass-approvals-and-sandbox`。
+4. **dsh headless 确实重发历史** —— 先前「headless 不重发、窗口永远为空」是误判:那次读到的 350 计费 token 属于一个辅助请求,同一会话的真实回合是 `units 44 / 204,988 字节 / 计费 56,058 token`。headless 缺的是**会话头**,不是上下文;`keepRecentTurns=3` 在 ≥4 轮之后照常放出窗口,折叠因此可以结算。
 
-仍未实测:`opencode compaction.auto` 恢复后的行为;dsh 的 `x-deepseek-harness-compact` 我们确实读不到(magpie hooks 的 `ctx` 不含请求头)。
+仍未实测:`opencode compaction.auto` 恢复后的行为;dsh 的 `x-deepseek-harness-compact` 我们确实读不到(magpie hooks 的 `ctx` 不含请求头);`dsh-tui`(交互 only,`--help` 都起 TUI)与 headless 是否共用同一 `dsh|` 键有待在交互会话里确认。
