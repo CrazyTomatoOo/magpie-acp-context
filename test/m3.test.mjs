@@ -276,18 +276,48 @@ describe("a refused turn", () => {
     await onRequest(chatHistory(), ctx(dir));
     await onResponse({ error: { message: "Input exceeds the context limit (1048570 tokens). Please shorten the input." } }, ctx(dir, { success: false }));
     const status = renderStatus(scanStore(dir));
-    expect(status).toContain("上游拒绝了上一次请求");
-    expect(status).toContain("1,048,570");
+    expect(status).toContain("上游拒了上一轮");
+    expect(status).toContain("上限约 1,048,570 tokens");
+    expect(status).toContain("折叠救不了这一轮");
     expect(status).toContain("先在宿主里压缩一次");
   });
 
-  test("a failed turn with no body says what is known and what it would mean", async () => {
+  // magpie hands a failed turn no reason at all (`reply` null, `ctx.state` empty), and omp's own
+  // cancel arrives as `success: false` too - so a single failure must not be dressed up as a
+  // provider rejection, and must not send anyone off to compact a session that is merely jittering.
+  test("a single failure with no body states the fact and claims no cause", async () => {
     const dir = store();
     await onRequest(chatHistory(), ctx(dir));
     await onResponse(null, ctx(dir, { success: false }));
     const status = renderStatus(scanStore(dir));
-    expect(status).toContain("没有附带原因");
+    expect(status).toContain("上一轮请求没拿到回复");
+    expect(status).toContain("不转发原因");
+    expect(status).toContain("单次失败");
+    expect(status).not.toContain("先在宿主里压缩一次");
+    expect(status).not.toContain("上游拒了上一轮");
+  });
+
+  test("a session that keeps failing gets the compaction advice", async () => {
+    const dir = store();
+    await onRequest(chatHistory(), ctx(dir));
+    await onResponse(null, ctx(dir, { success: false }));
+    await onRequest(chatHistory(), ctx(dir));
+    await onResponse(null, ctx(dir, { success: false }));
+    const status = renderStatus(scanStore(dir));
+    expect(status).toContain("连续 2 轮都如此");
     expect(status).toContain("先在宿主里压缩一次");
+  });
+
+  test("a one-off failure stays out of the note, and repetition puts it in", async () => {
+    const dir = store();
+    const first = await onRequest(chatHistory(), ctx(dir));
+    expect(JSON.stringify(first.messages)).not.toContain("没拿到回复");
+    await onResponse(null, ctx(dir, { success: false }));
+    const afterOne = await onRequest(chatHistory(), ctx(dir));
+    expect(JSON.stringify(afterOne.messages)).not.toContain("没拿到回复");
+    await onResponse(null, ctx(dir, { success: false }));
+    const afterTwo = await onRequest(chatHistory(), ctx(dir));
+    expect(JSON.stringify(afterTwo.messages)).toContain("连续 2 轮都如此");
   });
 
   test("does not blame the window for a refusal that is not about size", async () => {
@@ -307,7 +337,8 @@ describe("a refused turn", () => {
     expect(JSON.stringify(warned.messages)).toContain("先在宿主里压缩一次");
 
     await onResponse({ usage: { prompt_tokens: 900, completion_tokens: 5 } }, ctx(dir));
-    expect(renderStatus(scanStore(dir))).not.toContain("上游拒绝了上一次请求");
+    expect(renderStatus(scanStore(dir))).not.toContain("上游拒了上一轮");
+    expect(renderStatus(scanStore(dir))).not.toContain("没拿到回复");
     const after = await onRequest(chatHistory(), ctx(dir));
     expect(JSON.stringify(after.messages)).not.toContain("先在宿主里压缩一次");
   });

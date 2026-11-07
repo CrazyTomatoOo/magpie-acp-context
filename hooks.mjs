@@ -17,7 +17,7 @@
  * Failing open is the default: any error returns undefined, i.e. the original request.
  */
 import { loadConfig } from "./src/config.mjs";
-import { refusalLine } from "./src/maintenance.mjs";
+import { refusalNote } from "./src/maintenance.mjs";
 import { adapterFor, advertisedToolNames } from "./src/protocol.mjs";
 import { openSession } from "./src/store.mjs";
 import { canCallOwnTools, compressCalls, MIN_SUMMARY_BYTES } from "./src/compress.mjs";
@@ -340,8 +340,8 @@ export async function onRequest(body, ctx) {
       session.withLock(() => session.recordFolds(created, ({ blockId, role, text }) => session.storeOriginal(blockId, { role, text, ref: refs[blockId], at: Date.now() })));
     }
     const ranges = liveRanges({ units, folds: session.folds(), window });
-    // Said in the transcript, not only in acp_status: the turn after a refusal is read by a model
-    // that is about to spend the same tokens again unless someone compacts the host side first.
+    // Said in the transcript only when it is actionable (a proven ceiling, or the repetition that
+    // marks a stuck session): a one-off cancel is noise a model would pay for on every turn.
     const refusal = session.refusal();
 
     // Tokens: the billed prompt of the last reply when there is one (it is the only
@@ -418,7 +418,7 @@ export async function onRequest(body, ctx) {
         skipped: unresolved,
         foreign,
         rejected,
-        refusal: refusal ? refusalLine(refusal) : "",
+        refusal: refusalNote(refusal),
         minRangeBytes: cfg.minRangeBytes,
       });
       if (cfg.injectStyle === "system-suffix") adapter.appendSystem(next, note);

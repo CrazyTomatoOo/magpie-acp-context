@@ -123,8 +123,10 @@ export function openSession(storeDir, key) {
      * its way out. Kept until a reply lands, because only then is the refusal history.
      */
     recordRefusal(sample) {
-      state.refusal = sample;
+      const strikes = Number(state.refusal?.strikes ?? 0) + 1;
+      state.refusal = { ...sample, strikes };
       dirty = true;
+      return strikes;
     },
     clearRefusal() {
       if (!state.refusal) return false;

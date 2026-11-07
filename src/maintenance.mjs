@@ -243,17 +243,34 @@ export function refusalLine(refusal) {
   const pad = (n) => String(n).padStart(2, "0");
   const d = refusal.at ? new Date(refusal.at) : null;
   const when = d && !Number.isNaN(d.getTime())
-    ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+    ? `(${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())})`
     : "";
-  const mine = refusal.tokens ? `本轮 ≈${num(refusal.tokens)} tokens` : "";
-  // magpie forwards no reason on a failed turn, so most refusals arrive with an empty body: say
-  // what is known and what it would mean, rather than inventing a cause.
-  if (!refusal.text) {
-    return `上游拒绝了上一次请求${when ? `(${when})` : ""},没有附带原因;${mine || "本轮大小未知"}。若这是上下文上限,折叠救不了这一轮 —— 请求在模型看到提示之前就被拒了,先在宿主里压缩一次(compaction)再继续。`;
+  const size = refusal.tokens ? `本轮 ≈${num(refusal.tokens)} tokens` : "本轮大小未知";
+  const strikes = Number(refusal.strikes ?? 0);
+
+  // A reason with a ceiling in it is proof. Say it plainly, and say the fold cannot help.
+  if (refusal.contextLimit) {
+    const why = String(refusal.text || "理由是上下文超限").replace(/[。.]+$/, "");
+    const ceiling = refusal.limit ? `上限约 ${num(refusal.limit)} tokens。` : "";
+    const here = refusal.tokens ? `本轮 ≈${num(refusal.tokens)} tokens。` : "";
+    return `上游拒了上一轮${when}:${why}。${ceiling}${here}折叠救不了这一轮 —— 请求在模型看到提示之前就被拒了,先在宿主里压缩一次(compaction),再继续。`;
   }
-  const head = `上游拒绝了上一次请求${when ? `(${when})` : ""}:${refusal.text}`;
-  if (!refusal.contextLimit) return `${head}。`;
-  const ceiling = refusal.limit ? ` 上限约 ${num(refusal.limit)} tokens` : "";
-  const here = refusal.tokens ? `,本轮 ≈${num(refusal.tokens)} tokens` : "";
-  return `${head}。${ceiling}${here};折叠救不了这一轮 —— 请求在模型看到提示之前就被拒了,先在宿主里压缩一次(compaction),再继续。`;
+
+  // No reason arrives: magpie forwards nothing on a failed turn (measured 2026-11-07: `reply` is
+  // null, `ctx.state` empty), and an aborted request (omp cancels with 499) looks exactly like a
+  // provider rejection from here. So state the fact and let repetition speak, never assert a cause.
+  const why = refusal.text ? `${refusal.text}。` : "magpie 在失败回合不转发原因。";
+  if (strikes >= 2) {
+    return `上一轮请求又没拿到回复${when};${size},连续 ${strikes} 轮都如此。${why}若每一轮都在同一个体量上失败,通常是上下文上限 —— 那种情况下折叠救不了(请求在模型看到提示之前就被拒了),先在宿主里压缩一次(compaction)。`;
+  }
+  return `上一轮请求没拿到回复${when};${size}。${why}单次失败多半是取消或上游抖动,下一轮成功就会清掉。`;
+}
+
+/**
+ * The note is context the model pays for on every turn, so it only carries a refusal that has
+ * something to act on: a proven ceiling, or the repetition that makes a stuck session evident.
+ */
+export function refusalNote(refusal) {
+  if (!refusal) return "";
+  return refusal.contextLimit || Number(refusal.strikes ?? 0) >= 2 ? refusalLine(refusal) : "";
 }
