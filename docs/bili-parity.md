@@ -68,6 +68,7 @@ changed version: 0.1.211 → 0.1.212
 | 紧急截断 `truncate.threshold` | 只提示,不截断 | 同一个原因 |
 | CCR 的 `minToolTokens` 阈值 | 原文一律落盘 | 没有阈值,但也没法在代理侧做引用替换 |
 | 提示词是 bili 自己的 ACP 文本 | 我们自写在 `src/nudge.mjs` / `src/config.mjs` | 语境是 magpie 的 MCP 工具,不是 bili 的 5 个工具 |
+| `ALWAYS_PROTECTED_TOOLS` 保护 `compress`/`acp_rule` 的调用记录 | 保护本插件自己的工具调用与回复(含设备调用形状),但 `[acp]` marker 摘要本身仍可再折 | 守的是同一个契约:摘要即历史,「折过哪些段」这句话要留在上下文里;差别是二级折叠在这里合法,摘要之摘要的质量由另一道门管(#9) |
 
 ## 4. 许可
 

@@ -255,6 +255,31 @@ export function unknownShapes(units, calls) {
 }
 
 /**
+ * A unit carrying this plugin's own tool traffic: a call to one of our tools (including a device
+ * call aimed at one), or the reply proving a call ran (#9).
+ *
+ * The summary is history, and so is the record of what was folded: a range that swallows the
+ * model's own `compress` call — or the answer that shows it executed — leaves the model unable to
+ * see what it already folded and which refs stay recoverable, so it re-folds the same span or
+ * loses the thread. bili guards the same idea with `ALWAYS_PROTECTED_TOOLS`, for the same reason:
+ * decompress and the "a summary is historical" contract are built on those records surviving.
+ *
+ * Only the tool traffic is protected, never an `[acp]` marker message: folding a summary is a
+ * legitimate second-level fold (its quality is guarded on its own ticket), and refusing it would
+ * forbid chained folding outright.
+ */
+export function ownToolUnit(unit) {
+  for (const call of unit?.toolCalls || []) {
+    if (isOwnToolName(call?.name)) return true;
+    const target = deviceTarget(call?.name, call?.input);
+    const tail = target ? (target.split(/[?#]/)[0].split("/").filter(Boolean).pop() ?? "") : "";
+    if (tail && isOwnToolName(tail)) return true;
+  }
+  const text = String(unit?.text || "");
+  return ACK_AT_START.test(text.trimStart()) || text.includes(COMPRESS_ACK);
+}
+
+/**
  * Some hosts route every tool through one generic device call, naming the real tool inside the
  * arguments rather than on the wire: measured on omp 2026-11-07, a compress call is replayed as
  * `write {path:"xd://mcp__magpie_acp_context_compress", content:"{...}"}`, so the tool name the

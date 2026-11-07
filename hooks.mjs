@@ -21,7 +21,7 @@ import { refusalNote } from "./src/maintenance.mjs";
 import { adapterFor, advertisedToolNames } from "./src/protocol.mjs";
 import { recordSkip } from "./src/skips.mjs";
 import { openSession } from "./src/store.mjs";
-import { canCallOwnTools, compressCalls, deviceTarget, MIN_SUMMARY_BYTES, unknownShapes } from "./src/compress.mjs";
+import { canCallOwnTools, compressCalls, deviceTarget, MIN_SUMMARY_BYTES, ownToolUnit, unknownShapes } from "./src/compress.mjs";
 import { blockIdOf, formatRef, neutralizeMarkers, sha256, utf8Bytes } from "./src/text.mjs";
 import { decideNudge, nudgeText, NUDGE_NONE } from "./src/nudge.mjs";
 import { estimateBodyTokens, readRefusal, readUsage } from "./src/usage.mjs";
@@ -139,6 +139,30 @@ function pairSafe(units, start, end) {
   return { start: s, end: e };
 }
 
+/**
+ * The first unit in a span that belongs to this plugin's own tool traffic, or -1.
+ *
+ * A fold may not reach across it: the record has to stay where the model can read it (#9).
+ */
+function ownToolBarrier(barriers, start, end) {
+  if (!barriers.size) return -1;
+  for (let i = start; i <= end; i += 1) if (barriers.has(i)) return i;
+  return -1;
+}
+
+/**
+ * The offer must be a span that can actually settle: start after the newest own-tool record
+ * inside it, so the note never advertises a range whose apply would refuse it (#9, the same
+ * advertise/apply split bili fixed in #3236).
+ */
+function trimAtOwnTools(window, barriers) {
+  for (let i = window.to; i >= window.from; i -= 1) {
+    if (!barriers.has(i)) continue;
+    return i + 1 <= window.to ? { from: i + 1, to: window.to } : null;
+  }
+  return window;
+}
+
 /** The newest unit a range can END at without dragging its tool result past `cap`. */
 function citableEnd(units, cap) {
   for (let e = cap; e >= 0; e -= 1) {
@@ -201,7 +225,11 @@ export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
     const ref = refs[unit.blockId];
     if (ref) idToIndex.set(ref, unit.index);
   }
-  const window = foldWindow(units, cfg.keepRecentTurns);
+  const window0 = foldWindow(units, cfg.keepRecentTurns);
+  // Our own tool traffic is a barrier, not just a refusal: a range may not reach across it (#9).
+  const barriers = new Set();
+  for (let i = 0; i < units.length; i += 1) if (ownToolUnit(units[i])) barriers.add(i);
+  const window = window0 ? trimAtOwnTools(window0, barriers) : null;
   const created = [];
   const unresolved = [];
   const foreign = [];
@@ -298,6 +326,13 @@ export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
       }
       if (coveredBySettled(startIndex, endIndex)) continue;
       const safe = pairSafe(units, startIndex, endIndex);
+      const barrier = ownToolBarrier(barriers, safe.start, safe.end);
+      if (barrier >= 0) {
+        rejected.push(
+          `${label}:范围含插件自己的压缩记录 ${refs[units[barrier].blockId] ?? "?"}(压缩/取回/状态的调用或结果),它要留在上下文里说明折过哪些段;请把范围收在它之后`,
+        );
+        continue;
+      }
       const cover = coveringFoldOf(safe.start);
       if (cover !== undefined) {
         const coverEnd = Number(idToIndex.get(cover.endRef));

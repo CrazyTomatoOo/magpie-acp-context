@@ -47,7 +47,9 @@ proxy rewrites bodies. That is the same split the community plugins
    bytes, so prompt caches survive untouched turns.
 
 Safety rules: never touch the pending turn, never split a tool call from its result, never
-fold without a real compress call, refuse ranges under `minRangeBytes`, neutralize ref-lookalike
+fold without a real compress call, never fold a range that contains this plugin's own tool
+records (a compress/decompress/acp_status call or its reply — the record of what was folded has
+to stay where the model can read it), refuse ranges under `minRangeBytes`, neutralize ref-lookalike
 text in summaries (`m00007` → `m#00007`, `[acp]` → `[acp ]`) so the model cannot forge a fold
 boundary, and fail open on any error.
 
