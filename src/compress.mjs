@@ -59,10 +59,18 @@ const FENCE = /^```[a-zA-Z]*\s*|\s*```$/g;
  * wrapping differs per wire (`magpie-acp-context_compress`,
  * `_mcp__magpie_acp_context_compress`, `mcp__magpie__magpie-acp-context_decompress`).
  */
+/** The plugin's other tool names: a client can declare these without any wrapper at all. */
+const OWN_TOOL_NAMES = new Set([...COMPRESS_TOOL_NAMES, "decompress", "search_context", "acp_status", "acp_cache"]);
+
 export function isOwnToolName(name) {
   const raw = String(name ?? "").toLowerCase().trim();
   if (!raw) return false;
-  return canonical(raw).includes(`${canonical(OWN_PREFIX)}_`);
+  const full = canonical(raw);
+  // Measured on omp 2026-11-07: its tool inventory lists the served names bare - `compress`,
+  // `decompress`, `acp_status` - so a gate that demanded the plugin prefix switched
+  // compression off for a client that could call every tool the prompt names.
+  if (OWN_TOOL_NAMES.has(full)) return true;
+  return full.includes(`${canonical(OWN_PREFIX)}_`);
 }
 
 /**

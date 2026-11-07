@@ -69,15 +69,18 @@ describe("tool gate", () => {
     "_mcp__magpie_acp_context_decompress",
     "MAGPIE.ACP.CONTEXT.compress",
   ];
-  // A bare `compress` is a tool some other server could serve; only the plugin's own prefix
-  // proves the client can reach ours.
-  const foreign = ["compress", "read", "web_search", "mcp__other__compress", "other-acp-context_compress"];
+  // omp lists the served names bare (measured 2026-11-07: respond, compress, decompress,
+  // search_context, acp_status, acp_cache), so a bare name IS the plugin's tool there - while
+  // another server's wrapped `compress` keeps the prefix that rules it out.
+  const bare = ["compress", "decompress", "search_context", "acp_status", "acp_cache"];
+  const foreign = ["read", "web_search", "mcp__other__compress", "other-acp-context_compress"];
   // A client can call our tools without naming them: code and shell surfaces reach MCP, which
   // is how omp (the magpie lane's host) does it.
   const execSurfaces = ["_bash", "eval", "run_code", "terminal", "mcp__shell__bash"];
 
   test("every name our tools travel under is recognised", () => {
     for (const name of owns) expect(isOwnToolName(name)).toBe(true);
+    for (const name of bare) expect(isOwnToolName(name)).toBe(true);
     for (const name of foreign) expect(isOwnToolName(name)).toBe(false);
     for (const name of execSurfaces) expect(isOwnToolName(name)).toBe(false);
     expect(isOwnToolName("")).toBe(false);
@@ -87,8 +90,16 @@ describe("tool gate", () => {
   test("code and shell surfaces count as able to call our tools", () => {
     for (const name of execSurfaces) expect(canCallOwnTools([name])).toBe(true);
     for (const name of [...owns, ...execSurfaces]) expect(canCallOwnTools([name])).toBe(true);
+    for (const name of bare) expect(canCallOwnTools([name])).toBe(true);
     for (const name of foreign) expect(canCallOwnTools([name])).toBe(false);
     expect(canCallOwnTools([])).toBe(false);
+  });
+
+  test("a toolset that lists our tools bare is served", async () => {
+    const listed = ["respond", "compress", "decompress", "search_context", "acp_status", "acp_cache", "acp_read_original_image"];
+    expect(await served(options(), listed.map((name) => ({ type: "function", function: { name } })))).toBe(true);
+    const reviewBot = ["task_done", "code_comment", "code_search", "file_read", "file_read_diff", "file_find"];
+    expect(await served(options(), reviewBot.map((name) => ({ type: "function", function: { name } })))).toBe(false);
   });
 
   test("the real omp toolset is served", async () => {
