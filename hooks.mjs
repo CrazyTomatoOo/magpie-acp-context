@@ -18,6 +18,7 @@
  */
 import { loadConfig } from "./src/config.mjs";
 import { refusalNote } from "./src/maintenance.mjs";
+import { writeFileSync } from "node:fs";
 import { adapterFor, advertisedToolNames } from "./src/protocol.mjs";
 import { openSession } from "./src/store.mjs";
 import { canCallOwnTools, compressCalls, MIN_SUMMARY_BYTES } from "./src/compress.mjs";
@@ -321,6 +322,9 @@ export async function onRequest(body, ctx) {
       return undefined;
     }
 
+    if (cfg.debug) {
+      try { writeFileSync(`${cfg.storeDir}/debug-body.json`, JSON.stringify(body)); } catch (err) { console.error("[magpie-acp-context] dump failed:", err?.message); }
+    }
     const units = adapter.read(body);
     if (units.length === 0) return undefined;
 
