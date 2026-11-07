@@ -61,7 +61,7 @@ to every agent at `/mcp/magpie/tools`:
 | `<short>_compress` | parses the payload into ranges and tells the model what it wrote; the fold itself is settled by the hook on the next request |
 | `<short>_decompress` | returns the original text of a folded block, by block id or by the ref it was shown under |
 | `<short>_search_context` | substring + term-frequency search over folded originals |
-| `<short>_acp_status` | store size, one line per session (refs, folds, growth since the last fold against the nudge line, billed prompt tokens, last nudge); `{evict:true}` runs eviction |
+| `<short>_acp_status` | store size, one line per session (refs, folds, growth since the last fold against the nudge line, billed prompt tokens, last nudge), plus a second line when the provider refused that session's last turn — a context-limit refusal names the ceiling and says the host has to compact first; `{evict:true}` runs eviction |
 
 `<short>` is the plugin's short name — the folder name it was added from, capped at 24
 characters. Install it as `magpie-acp-context` to get `magpie-acp-context_decompress`.

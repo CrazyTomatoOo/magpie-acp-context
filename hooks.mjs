@@ -17,12 +17,13 @@
  * Failing open is the default: any error returns undefined, i.e. the original request.
  */
 import { loadConfig } from "./src/config.mjs";
+import { refusalLine } from "./src/maintenance.mjs";
 import { adapterFor, advertisedToolNames } from "./src/protocol.mjs";
 import { openSession } from "./src/store.mjs";
 import { canCallOwnTools, compressCalls, MIN_SUMMARY_BYTES } from "./src/compress.mjs";
 import { blockIdOf, formatRef, neutralizeMarkers, sha256, utf8Bytes } from "./src/text.mjs";
 import { decideNudge, nudgeText, NUDGE_NONE } from "./src/nudge.mjs";
-import { estimateBodyTokens, readUsage } from "./src/usage.mjs";
+import { estimateBodyTokens, readRefusal, readUsage } from "./src/usage.mjs";
 
 const PROMPT = [
   "[acp] 每条历史消息前的 [mNNNNN] 是它的 ref。",
@@ -32,7 +33,7 @@ const PROMPT = [
 ].join("");
 
 /** `foldableFrom`/`foldableTo` are refs already (`m00001`), never numbers: the note is display text. */
-export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], foreign = [], rejected = [], minRangeBytes = 0 }) {
+export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], foreign = [], rejected = [], refusal = "", minRangeBytes = 0 }) {
   const base = PROMPT;
   const parts = [
     foldableFrom == null || foldableTo == null
@@ -68,6 +69,7 @@ export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], 
       `另有 ${foreign.length} 个 compress 调用来自别的压缩器(${foreign.slice(0, 3).join("、")}${foreign.length > 3 ? " 等" : ""}),它们的 ref 编号不是本插件发的,已跳过;要压缩请用上面给出的范围重新调用。`,
     );
   }
+  if (refusal) parts.push(refusal);
   if (nudge) parts.push(nudge);
   return parts.join("\n");
 }
@@ -338,6 +340,9 @@ export async function onRequest(body, ctx) {
       session.withLock(() => session.recordFolds(created, ({ blockId, role, text }) => session.storeOriginal(blockId, { role, text, ref: refs[blockId], at: Date.now() })));
     }
     const ranges = liveRanges({ units, folds: session.folds(), window });
+    // Said in the transcript, not only in acp_status: the turn after a refusal is read by a model
+    // that is about to spend the same tokens again unless someone compacts the host side first.
+    const refusal = session.refusal();
 
     // Tokens: the billed prompt of the last reply when there is one (it is the only
     // number the provider actually counted), never smaller than this body's own size,
@@ -413,6 +418,7 @@ export async function onRequest(body, ctx) {
         skipped: unresolved,
         foreign,
         rejected,
+        refusal: refusal ? refusalLine(refusal) : "",
         minRangeBytes: cfg.minRangeBytes,
       });
       if (cfg.injectStyle === "system-suffix") adapter.appendSystem(next, note);
@@ -444,14 +450,33 @@ export async function onResponse(reply, ctx) {
     // so a canary really is one client and nothing else.
     if (!allowsAgent(cfg, ctx) || !allowsOrigin(cfg, ctx)) return;
     const usage = readUsage(reply, ctx?.protocol);
-    if (!usage) return;
+    if (!usage && ctx?.success !== false) return;
     const session = openSession(cfg.storeDir, sessionKeyOf(ctx));
     // A session the hook never served has nothing to record usage FOR: either the request
     // gate above skipped this client (no declaration of our tools) or this is a reply to a
     // request that never reached the hook. Writing usage here would create a store entry for
     // a client that is byte-identically proxied, and its file would never fold anything.
     if (!session.existed) return;
+    // A refused turn has no usage, and it is the only evidence that this session is already too
+    // big for its window - the model never saw the nudge, so no fold can ever settle.
+    if (ctx?.success === false) {
+      const refusal = readRefusal(reply);
+      session.withLock(() => {
+        session.recordRefusal({
+          at: Date.now(),
+          protocol: ctx?.protocol ?? null,
+          model: ctx?.model ?? null,
+          tokens: Number(session.state.request?.tokens) || 0,
+          seq: session.state.request?.seq ?? null,
+          ...refusal,
+        });
+        session.save();
+      });
+      if (cfg.debug) console.error("[magpie-acp-context] refused:", refusal.text || "(no reason in the body)");
+      return;
+    }
     session.withLock(() => {
+      session.clearRefusal();
       session.recordUsage({ ...usage, at: Date.now(), model: ctx?.model ?? null, seq: session.state.request?.seq ?? null });
       session.save();
     });

@@ -600,6 +600,14 @@ store /tmp/store:4 个块 / 6,440 字节;1 个会话;窗口按 1,000 tokens 计�
 · Bun_ · refs=8 folds=1 evicted=0 · 本轮≈1,712 tok(~171%),计费 prompt=1,234 tok · 收到 usage 1 次 · nudge=emergency@1,712 tok
 ```
 
+一个会话被上游拒绝过时,那一行下面多一行:
+
+```
+  · 上游拒绝了上一次请求(2026-11-07 12:48):火山引擎 APIG 网关 (OpenAI): Input exceeds the context limit (1048570 tokens)。 上限约 1,048,570 tokens,本轮 ≈1,279,960 tokens;折叠救不了这一轮 —— 请求在模型看到提示之前就被拒了,先在宿主里压缩一次(compaction),再继续。
+```
+
+这条检测只能来自**失败回调**:我们没有可信的窗口大小,唯一可信的数字是上游拒绝时自己写出来的那个(`readRefusal` 从原因里取 `N tokens`;取不到就只报原因、不给建议)。记录在下一次回复落地时清除;同一条也会注入进下一轮的提示里,因为「已经撑爆」的会话如果宿主不先压缩,每一轮都会在模型看到提示之前被拒。
+
 参数 `{session?, limit?, evict?}`:`evict:true` 时顺带跑一次淘汰并报回收了多少块。`--session` 用的 key 来自 `sessionKeyOf(protocol, session, model, agent, cwd)`;**网关模式下客户端通常不传 session**,于是退化成 `agent|cwd`(上面那条 `Bun_` 就是退化的结果,`cwd` 未知时留空)。
 
 ### 17.4 淘汰

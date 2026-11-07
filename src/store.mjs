@@ -5,7 +5,7 @@ const LOCK_WAIT_MS = 120;
 
 const MAX_USAGE = 200;
 
-const emptySession = () => ({ v: 1, next: 1, refs: {}, folds: [], usage: [], nudge: null });
+const emptySession = () => ({ v: 1, next: 1, refs: {}, folds: [], usage: [], nudge: null, refusal: null });
 
 function paths(dir, key) {
   const root = join(dir, "sessions");
@@ -116,6 +116,24 @@ export function openSession(storeDir, key) {
     },
     lastUsage() {
       return state.usage[state.usage.length - 1] ?? null;
+    },
+    /**
+     * The provider refusing the request is the one signal no size estimate can supply: a
+     * session already bigger than its window never reaches the model, so it can never fold
+     * its way out. Kept until a reply lands, because only then is the refusal history.
+     */
+    recordRefusal(sample) {
+      state.refusal = sample;
+      dirty = true;
+    },
+    clearRefusal() {
+      if (!state.refusal) return false;
+      state.refusal = null;
+      dirty = true;
+      return true;
+    },
+    refusal() {
+      return state.refusal ?? null;
     },
     /** The whole request bookkeeping of the turn being sent, for `acp_status`. */
     recordRequest(info) {

@@ -78,6 +78,7 @@ export function scanStore(storeDir) {
       lastUsage: state.usage?.[state.usage.length - 1] ?? null,
       request: state.request ?? null,
       nudge: state.nudge ?? null,
+      refusal: state.refusal ?? null,
     };
   });
   const blocks = blockFiles(storeDir);
@@ -225,8 +226,25 @@ export function renderStatus({ storeDir, sessions, blocks, bytes }, { growthFloo
         `nudge=${s.nudge ? `${s.nudge.kind}@${num(s.nudge.tokens ?? 0)} tok` : "无"}`,
       ].join(" · "),
     );
+    if (s.refusal) out.push(`  ${refusalLine(s.refusal)}`);
   }
   return out.join("\n");
 }
 
 export { cleanup };
+
+/**
+ * What a refused turn means, said once. A refusal is the only proof this plugin ever gets that
+ * a session is already bigger than its window: the model never saw the prompt, so it never had
+ * a chance to fold, and asking it harder cannot help - the host has to compact first.
+ */
+export function refusalLine(refusal) {
+  const num = (n) => Number(n ?? 0).toLocaleString("en-US");
+  const when = refusal.at ? new Date(refusal.at).toISOString().slice(0, 16).replace("T", " ") : "";
+  const why = refusal.text || "上游没有在回复里附原因";
+  const head = `上游拒绝了上一次请求${when ? `(${when})` : ""}:${why}`;
+  if (!refusal.contextLimit) return `${head}。`;
+  const ceiling = refusal.limit ? ` 上限约 ${num(refusal.limit)} tokens` : "";
+  const mine = refusal.tokens ? `,本轮 ≈${num(refusal.tokens)} tokens` : "";
+  return `${head}。${ceiling}${mine};折叠救不了这一轮 —— 请求在模型看到提示之前就被拒了,先在宿主里压缩一次(compaction),再继续。`;
+}

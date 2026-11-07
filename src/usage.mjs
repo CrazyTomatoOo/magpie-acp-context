@@ -59,3 +59,30 @@ export function estimateBodyTokens(body) {
     return 0;
   }
 }
+
+/**
+ * Why the provider refused the request, when onResponse was told the turn failed. The body is
+ * whatever the gateway could keep: a chat error JSON, a text copy, or nothing at all. A refusal
+ * that names a context limit also names the ceiling, and that number is the only trustworthy
+ * window size this plugin ever gets - everything else would be a guess about the model.
+ */
+export function readRefusal(reply) {
+  let text = "";
+  if (typeof reply === "string") text = reply;
+  else if (reply && typeof reply === "object") {
+    const pick = [reply.error?.message, reply.error?.type, reply.message, reply.detail, reply.error];
+    text = pick.find((v) => typeof v === "string" && v.trim()) ?? "";
+    if (!text) {
+      try {
+        text = JSON.stringify(reply);
+      } catch {
+        text = "";
+      }
+    }
+  }
+  text = String(text).replace(/\s+/g, " ").trim().slice(0, 300);
+  const contextLimit = /context.{0,24}limit|maximum context|too (long|many tokens)|input (is )?too long|exceeds.{0,24}(limit|tokens)|上下文.{0,10}(超|上限)/i.test(text);
+  const named = text.match(/([\d][\d,.]{3,})\s*(?:tokens?|tok)\b/i);
+  const limit = named ? Number(named[1].replace(/[,\.]/g, "")) : 0;
+  return { text, contextLimit, limit: Number.isFinite(limit) && limit > 0 ? limit : 0 };
+}

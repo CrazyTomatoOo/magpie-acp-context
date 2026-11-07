@@ -264,3 +264,42 @@ describe("renderStatus", () => {
     expect(renderStatus(scanStore(dir))).toContain("还没有会话记录");
   });
 });
+
+describe("a refused turn", () => {
+  const ctx = (dir, extra = {}) => ({ protocol: "chat", origin: "local", session: "s1", options: { enabled: true, store: { dir } }, ...extra });
+
+  // A session already bigger than its window never reaches the model, so it can never fold its
+  // way out: the refusal is the only evidence, and it has to be said out loud (omp 2026-11-07,
+  // 1.28M tokens, 400 at the provider, zero folds, nothing in acp_status to explain it).
+  test("is recorded and says the host has to compact first", async () => {
+    const dir = store();
+    await onRequest(chatHistory(), ctx(dir));
+    await onResponse({ error: { message: "Input exceeds the context limit (1048570 tokens). Please shorten the input." } }, ctx(dir, { success: false }));
+    const status = renderStatus(scanStore(dir));
+    expect(status).toContain("上游拒绝了上一次请求");
+    expect(status).toContain("1,048,570");
+    expect(status).toContain("先在宿主里压缩一次");
+  });
+
+  test("does not blame the window for a refusal that is not about size", async () => {
+    const dir = store();
+    await onRequest(chatHistory(), ctx(dir));
+    await onResponse({ error: { message: "Service is too busy" } }, ctx(dir, { success: false }));
+    const status = renderStatus(scanStore(dir));
+    expect(status).toContain("Service is too busy");
+    expect(status).not.toContain("先在宿主里压缩一次");
+  });
+
+  test("clears once a reply lands, and the note stops mentioning it", async () => {
+    const dir = store();
+    await onRequest(chatHistory(), ctx(dir));
+    await onResponse({ error: { message: "Input exceeds the context limit (1048570 tokens)" } }, ctx(dir, { success: false }));
+    const warned = await onRequest(chatHistory(), ctx(dir));
+    expect(JSON.stringify(warned.messages)).toContain("先在宿主里压缩一次");
+
+    await onResponse({ usage: { prompt_tokens: 900, completion_tokens: 5 } }, ctx(dir));
+    expect(renderStatus(scanStore(dir))).not.toContain("上游拒绝了上一次请求");
+    const after = await onRequest(chatHistory(), ctx(dir));
+    expect(JSON.stringify(after.messages)).not.toContain("先在宿主里压缩一次");
+  });
+});
