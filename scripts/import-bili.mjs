@@ -87,7 +87,13 @@ function main() {
              ORDER BY updated_at DESC`,
           )
           .all(...args.namespaces)
-      : db.prepare("SELECT session_id, namespace, count(*) n FROM messages GROUP BY session_id ORDER BY n DESC").all();
+      : db
+          .prepare(
+            `SELECT m.session_id, s.namespace, count(*) n
+               FROM messages m JOIN sessions s ON s.session_id = m.session_id
+              GROUP BY m.session_id ORDER BY n DESC`,
+          )
+          .all();
   const chosen = args.limit > 0 ? sessions.slice(0, args.limit) : sessions;
 
   const report = { db: dbPath, store: storeDir, sessions: [], blocks: 0, folds: 0, dryRun: args.dryRun };
