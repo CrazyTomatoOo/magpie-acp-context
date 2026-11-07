@@ -192,7 +192,7 @@ hint never appears.
 | `refFormat` | `m%05d` | printf format for refs |
 | `minRangeBytes` | `5000` | smallest range worth folding |
 | `maxSummaryChars` | `20000` | summaries are truncated, never rejected |
-| `keepRecentTurns` | `3` | trailing user turns kept verbatim |
+| `keepRecentTurns` | `3` | trailing user turns kept verbatim; a session made of those turns alone keeps only the input being sent, because a window of zero never folds |
 | `nudge.growthFloor` | `50000` | growth (unfolded tail) since the last fold that triggers a nudge — the flat 50K billion-context uses for every window |
 | `store.dir` | `~/.local/share/magpie-acp` | state + folded originals |
 | `store.maxBytes` / `store.ttlDays` | `536870912` / `30` | eviction budget, applied on `acp_status {evict:true}` |

@@ -98,19 +98,41 @@ function pairSafe(units, start, end) {
   return { start: s, end: e };
 }
 
+/** The newest unit a range can END at without dragging its tool result past `cap`. */
+function citableEnd(units, cap) {
+  for (let e = cap; e >= 0; e -= 1) {
+    if (!units[e].stampable) continue;
+    let x = e;
+    while (x + 1 < units.length && (units[x].toolCalls || []).length > 0) x += 1;
+    if (x <= cap) return e;
+  }
+  return -1;
+}
+
 /**
- * The foldable window always stops before the turn being sent: everything from the last
- * user-positioned unit onward is the new input and must go out untouched. `keepRecentTurns`
- * additionally preserves that many trailing user turns.
+ * The foldable window always stops before the input being sent: everything from the newest
+ * user message, or from the last assistant message onward, goes out untouched. `keepRecentTurns`
+ * additionally preserves that many trailing user turns - and when they are the only turns there
+ * are, honouring it would protect the whole history: an agentic host spends one user turn on
+ * hundreds of tool steps, and omp reached 3,500 units, 1.28M tokens, a one-unit window and zero
+ * folds until the provider refused the body. The input alone is then the protected tail, because
+ * a session that can never fold grows until it dies.
  */
 function foldWindow(units, keepRecentTurns) {
+  let lastAssistant = -1;
+  let lastUser = -1;
+  for (let i = units.length - 1; i >= 0 && (lastAssistant < 0 || lastUser < 0); i -= 1) {
+    if (lastAssistant < 0 && units[i].role === "assistant") lastAssistant = i;
+    if (lastUser < 0 && units[i].role === "user") lastUser = i;
+  }
+  const input = lastAssistant < 0 ? 0 : lastUser > lastAssistant ? lastUser : lastAssistant + 1;
+  if (input <= 0) return null;
   const userIdx = [];
   units.forEach((u, i) => { if (u.role === "user") userIdx.push(i); });
-  if (userIdx.length === 0) return null;
-  const tailStart = userIdx[userIdx.length - 1];
   const keep = Math.max(0, Number(keepRecentTurns) || 0);
-  const boundary = keep > 0 ? userIdx[Math.max(0, userIdx.length - keep)] : tailStart;
-  const to = keep > 0 && userIdx.length <= keep ? -1 : Math.min(boundary, tailStart) - 1;
+  const boundary = keep > 0 && userIdx.length > keep ? userIdx[userIdx.length - keep] : -1;
+  let to = boundary >= 0 && boundary < input ? citableEnd(units, boundary - 1) : -1;
+  if (to < 0) to = citableEnd(units, input - 1);
   if (to < 0) return null;
   // A window may only name units a fold can cite. System/developer prompts are never numbered,
   // so a window that starts at index 0 hands the model `undefined` as its first ref - a range it
@@ -136,6 +158,9 @@ export function planFolds({ units, refs, session, cfg }) {
   // drop a call records the reason, so the next request can say it out loud.
   const rejected = [];
   const windowRefs = window ? `${refs[units[window.from]?.blockId] ?? "?"}–${refs[units[window.to]?.blockId] ?? "?"}` : "";
+  // The window ends at a citable message, and a range that ends there keeps its own tool result:
+  // the pair belongs to the same side of the cut, so it may reach one unit past the end.
+  const windowEnd = window ? pairSafe(units, window.to, window.to).end : -1;
   for (const call of compressCalls(units)) {
     if (call.unreadable) {
       rejected.push(`${refs[units[call.unitIndex]?.blockId] ?? "?"}:折叠写在 exec 脚本里,content 参数不是字面量,读不出来`);
@@ -162,7 +187,7 @@ export function planFolds({ units, refs, session, cfg }) {
         continue;
       }
       const safe = pairSafe(units, startIndex, endIndex);
-      if (window && (safe.start < window.from || safe.end > window.to)) {
+      if (window && (safe.start < window.from || safe.end > windowEnd)) {
         rejected.push(`${label}:超出可折叠窗口(${windowRefs}),最近的 ${Number(cfg.keepRecentTurns) || 0} 轮要留着`);
         continue;
       }

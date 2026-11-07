@@ -105,7 +105,8 @@ sequenceDiagram
 
 这些是「宁可少折,不可折错」的约束:
 
-- **不碰当前轮**:从最后一条 assistant 之后的所有消息(即这次要发的新输入)一律原样。
+- **不碰当前轮**:最新一条 user 消息、以及最后一条 assistant 之后的所有消息(即这次要发的新输入)一律原样。
+- **窗口不为零**:`keepRecentTurns` 保护的尾部如果吃掉了整段历史——agentic 宿主一整轮 user 消息底下挂着几百个工具步,omp 上就是 3,500 条消息、1.28M token、零折叠——就退化成只保当前输入,否则这个会话永远折不动、涨到上游拒绝为止。
 - **不碰 system/instructions**:注入只发生在 user 侧,或按 `injectStyle:"system-suffix"` 追加在 system 尾部(也要逐字节稳定)。
 - **不拆工具配对**:折叠范围必须按「工具配对闭合」的边界收缩;实在闭合不了就整段不折。
 - **不折未知形状**:解析不了的 content 部分、图片/文件块原样保留,fold 只把文本部分纳入统计。
@@ -129,7 +130,7 @@ sequenceDiagram
 | `refFormat` | `"m%05d"` | 显示编号格式,改它等于换渲染域 |
 | `minRangeBytes` | `5000` | 小于它的范围不接受 compress |
 | `maxSummaryChars` | `20000` | 摘要上限,超出要求模型重写 |
-| `keepRecentTurns` | `3` | 尾部保留轮数 |
+| `keepRecentTurns` | `3` | 尾部保留的 user 轮数;会话里只有这几轮时退化为只保当前输入(否则窗口永远是零) |
 | `nudge.growthFloor` | `50000` | 唯一的触发口径:自上次折叠后增长到它就催 |
 | `store.dir` | `~/.local/share/magpie-acp` | 与 magpie 配置目录分开 |
 | `store.maxBytes` | `536870912` | 超了按最久未用淘汰 |

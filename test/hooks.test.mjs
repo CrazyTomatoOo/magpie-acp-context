@@ -46,9 +46,32 @@ function chatHistory({ compress = "m00002–m00005 早期需求\n用户要求读
   return { model: "x", messages };
 }
 
+/** The shape an agentic host sends: one user turn, then a long run of tool steps. */
+function agenticHistory({ exchanges = 12, includeCompress = true, compress = "m00002–m00012 早期排查\n读了几轮文件,结论是填充文本,不需要逐字保留。" } = {}) {
+  const messages = [{ role: "user", content: "查一下这个仓库为什么会话一直膨胀。" }];
+  for (let i = 0; i < exchanges; i += 1) {
+    messages.push({
+      role: "assistant",
+      content: `第 ${i} 次读文件`,
+      tool_calls: [{ id: `call_${i}`, type: "function", function: { name: "read_file", arguments: `{"path":"f${i}.txt"}` } }],
+    });
+    messages.push({ role: "tool", tool_call_id: `call_${i}`, content: `${i} ${filler(2000)}` });
+  }
+  if (includeCompress) {
+    messages.push({
+      role: "assistant",
+      content: "",
+      tool_calls: [{ id: "call_c", type: "function", function: { name: "compress", arguments: JSON.stringify({ content: compress }) } }],
+    });
+    messages.push({ role: "tool", tool_call_id: "call_c", content: `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。` });
+  }
+  messages.push({ role: "user", content: "继续" });
+  return { model: "x", messages };
+}
+
 const ctxOf = (options, extra = {}) => ({
-      protocol: "chat",
-      origin: "local", session: "s1", origin: "local", options, ...extra });
+  protocol: "chat",
+  origin: "local", session: "s1", options, ...extra });
 
 describe("refs", () => {
   test("stamps a durable ref on prose and leaves tool turns alone", async () => {
@@ -137,6 +160,32 @@ describe("folding", () => {
     const options = opts();
     const out = await onRequest(chatHistory({ includeCompress: false }), ctxOf(options));
     expect(JSON.stringify(out.messages)).not.toContain("[acp] m0000");
+  });
+
+  test("announces a foldable range in a session that has only one user turn", async () => {
+    // Measured on omp 2026-11-07: one user turn, 3,500 units, zero folds. Keeping N trailing user
+    // turns protected the whole history, so no range was ever announced, and the body grew to
+    // 1.28M tokens until the provider refused it.
+    const options = opts({ keepRecentTurns: 3 });
+    const out = await onRequest(agenticHistory({ includeCompress: false }), ctxOf(options));
+    expect(out.messages.at(-1).content).toMatch(/当前可以折叠的范围是 m00001–m\d{5}/);
+  });
+
+  test("settles a fold that names the range it announced", async () => {
+    const options = opts({ keepRecentTurns: 3 });
+    const announced = (await onRequest(agenticHistory({ includeCompress: false }), ctxOf(options))).messages.at(-1).content;
+    const [, from, to] = announced.match(/当前可以折叠的范围是 (m\d{5})–(m\d{5})/);
+    const out = await onRequest(agenticHistory({ compress: `${from}–${to} 早期排查\n读了几轮文件,结论是填充文本,不需要逐字保留。` }), ctxOf(options));
+    const marker = out.messages.find((m) => String(m.content).includes("早期排查"));
+    expect(marker.role).toBe("user");
+    expect(marker.content.includes(`${from}–`)).toBe(true);
+  });
+
+  test("refuses a range that reaches into the input being sent", async () => {
+    const options = opts({ keepRecentTurns: 3 });
+    const body = agenticHistory({ compress: "m00002–m00028 早期排查\n这段越过了当前输入,应当被拒绝。" });
+    const out = await onRequest(body, ctxOf(options));
+    expect(JSON.stringify(out.messages)).not.toContain("[acp] m00002");
   });
 
   test("escapes ref-shaped text inside the summary", async () => {
