@@ -104,6 +104,35 @@ describe("codex reaches MCP from inside its exec orchestrator", () => {
   });
 });
 
+describe("opencode reaches MCP from inside its execute tool", () => {
+  // Measured on opencode 2.2.5 through a real magpie gateway (chat wire, 2026-11-07): every
+  // MCP call arrives as one `execute` call named `execute`, its arguments being the JSON
+  // string {"code":"const res = await tools[\"magpie-acp-context\"].compress({ content: `…` });"}
+  const call = (content) =>
+    JSON.stringify({ code: `const res = await tools["magpie-acp-context"].compress({ content: ${content} });\nreturn res;` });
+
+  const withCall = (input) => [
+    { index: 0, role: "user", text: "m00001 填", toolCalls: [], stampable: true },
+    { index: 1, role: "assistant", text: "", stampable: false, toolCalls: [{ name: "execute", input }] },
+    { index: 2, role: "tool", text: ACK, toolCalls: [], stampable: false },
+    { index: 3, role: "user", text: "继续", toolCalls: [], stampable: true },
+  ];
+
+  test("the escaped JSON string yields the literal the script carries", () => {
+    const calls = compressCalls(withCall(call("`m00002–m00005 填充\n前几轮只是填充,结论已定,原文不再需要逐字保留。`")));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].entries[0]).toMatchObject({ startId: "m00002", endId: "m00005" });
+    expect(calls[0].acknowledged).toBe(true);
+  });
+
+  test("a computed content is reported instead of guessed", () => {
+    const calls = compressCalls(withCall(call("build()")));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].unreadable).toBe(true);
+    expect(calls[0].entries).toHaveLength(0);
+  });
+});
+
 describe("codex CLI's namespace-shaped declaration (#15 lane probe)", () => {
   // Measured on codex-cli 0.166 (responses wire) through a real magpie gateway: the MCP
   // server arrives as one namespace entry and the callable names live one level down.

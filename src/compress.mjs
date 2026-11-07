@@ -249,7 +249,21 @@ function scriptMentionsOurTool(name, input) {
  * is folded into the dotted spelling here so one matcher serves both.
  */
 function scriptText(input) {
-  const raw = input && typeof input === "object" ? (input.code ?? input.script ?? input.source ?? JSON.stringify(input)) : input;
+  let value = input;
+  // opencode sends its `execute` call's arguments as the JSON string it read off the wire
+  // (`{"code":"const r = await tools[\"magpie-acp-context\"].compress({…})"}`), so the script
+  // is one unescape away - and while it stays escaped, every pattern below misses.
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (text.startsWith("{") || text.startsWith("[")) {
+      try {
+        value = JSON.parse(text);
+      } catch {
+        value = text;
+      }
+    }
+  }
+  const raw = value && typeof value === "object" ? (value.code ?? value.script ?? value.source ?? JSON.stringify(value)) : value;
   return String(raw ?? "").replace(/tools\s*\[\s*(["'])([^"']+)\1\s*\]/g, "tools.$2");
 }
 
