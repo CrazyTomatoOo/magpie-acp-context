@@ -240,7 +240,11 @@ export { cleanup };
  */
 export function refusalLine(refusal) {
   const num = (n) => Number(n ?? 0).toLocaleString("en-US");
-  const when = refusal.at ? new Date(refusal.at).toISOString().slice(0, 16).replace("T", " ") : "";
+  const pad = (n) => String(n).padStart(2, "0");
+  const d = refusal.at ? new Date(refusal.at) : null;
+  const when = d && !Number.isNaN(d.getTime())
+    ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+    : "";
   const mine = refusal.tokens ? `本轮 ≈${num(refusal.tokens)} tokens` : "";
   // magpie forwards no reason on a failed turn, so most refusals arrive with an empty body: say
   // what is known and what it would mean, rather than inventing a cause.
