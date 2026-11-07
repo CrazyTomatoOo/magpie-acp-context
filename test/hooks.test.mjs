@@ -400,6 +400,82 @@ describe("sessions inherited from another compressor", () => {
   });
 });
 
+describe("a lane whose replay shape nothing here knows", () => {
+  // The failure this guard exists for was silent for a whole session: the tool answered
+  // "解析到 1 段" every time and no fold ever settled (omp, 491 refs, 2026-11-07). A shape nobody
+  // has taught the reader yet has to say its name out loud instead.
+  const withShape = (name, args) => {
+    const messages = [
+      { role: "user", content: "把早期细节折掉。" },
+      { role: "assistant", content: "", tool_calls: [{ id: "c1", type: "function", function: { name, arguments: args } }] },
+      { role: "tool", tool_call_id: "c1", content: `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。` },
+      { role: "user", content: "继续" },
+    ];
+    return { model: "x", messages };
+  };
+
+  test("names the shape and says the fold will not settle", async () => {
+    const options = opts();
+    const body = withShape("dispatch", JSON.stringify({ call: { server: "magpie-acp-context", tool: "compress" } }));
+    const out = await onRequest(structuredClone(body), ctxOf(options));
+    const note = String(out.messages.at(-1).content);
+    expect(note).toContain("读不出对应的调用");
+    expect(note).toContain("dispatch");
+  });
+
+  test("a readable call keeps the note quiet", async () => {
+    const options = opts();
+    const body = chatHistory();
+    const out = await onRequest(structuredClone(body), ctxOf(options));
+    expect(String(out.messages.at(-1).content)).not.toContain("读不出对应的调用");
+  });
+
+  test("a call named like ours whose arguments are not a range is reported, not ignored", async () => {
+    const options = opts();
+    const body = withShape("mcp__magpie-acp-context__compress", '{"ranges":[]}');
+    const out = await onRequest(structuredClone(body), ctxOf(options));
+    expect(String(out.messages.at(-1).content)).toContain("载荷读不出来");
+  });
+});
+
+describe("a refusal that has been superseded", () => {
+  test("is not re-announced once a later fold settled", async () => {
+    const options = opts();
+    const body = chatHistory();
+    await onRequest(structuredClone(body), ctxOf(options));
+    const after = await onRequest(structuredClone(body), ctxOf(options));
+    expect(String(after.messages.at(-1).content)).not.toContain("上一次折叠请求没有生效");
+  });
+
+  test("is still announced while nothing has settled", async () => {
+    const options = opts();
+    const body = chatHistory({ compress: "m00002–m00004 早期需求\n太短" });
+    const out = await onRequest(structuredClone(body), ctxOf(options));
+    expect(String(out.messages.at(-1).content)).toContain("上一次折叠请求没有生效");
+  });
+});
+
+describe("a device call whose payload is not a range", () => {
+  test("names the target so the shape is visible in one line", async () => {
+    const options = opts();
+    const body = chatHistory();
+    const call = body.messages.find((m) => m.tool_calls?.some((c) => c.function.name === "compress")).tool_calls[0];
+    call.function.name = "write";
+    call.function.arguments = JSON.stringify({ path: "xd://mcp__magpie_acp_context_compress", content: "随便写点什么" });
+    const out = await onRequest(structuredClone(body), ctxOf(options));
+    expect(String(out.messages.at(-1).content)).toContain("xd://mcp__magpie_acp_context_compress");
+  });
+});
+
+describe("the note a model reads before its first fold", () => {
+  test("names the tool's real argument, not a shape the tool would reject", async () => {
+    const out = await onRequest(structuredClone(chatHistory({ includeCompress: false })), ctxOf(opts()));
+    const note = String(out.messages.at(-1).content);
+    expect(note).toContain("content");
+    expect(note).not.toContain("startRef");
+  });
+});
+
 describe("a host that reaches MCP through its generic device call", () => {
   // Measured on omp 2026-11-07 (the captured request body): the transcript replays a compress
   // call as `write {path:"xd://mcp__magpie_acp_context_compress", content:"{...}"}`. The wire

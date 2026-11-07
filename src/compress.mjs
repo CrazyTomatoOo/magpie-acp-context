@@ -204,14 +204,49 @@ export function compressCalls(units) {
         calls.push({ unitIndex: unit.index, entries, acknowledged: acknowledges(units, unit.index) });
         continue;
       }
-      // A script that mentions our tool but whose arguments could not be read is a call we saw
-      // and still cannot settle. Reporting it beats pretending the model never called.
-      if (!direct && scriptMentionsOurTool(call?.name, call?.input)) {
-        calls.push({ unitIndex: unit.index, entries: [], unreadable: true, acknowledged: acknowledges(units, unit.index) });
+      // A call this plugin executed but cannot read is the quietest failure there is: the model
+      // believes the fold landed and the hook says nothing. Every shape below is a call we saw
+      // and still could not settle, so it is reported (with the name that defeated us) instead of
+      // being treated as a call that never happened.
+      const seen =
+        direct ||
+        device !== null ||
+        scriptMentionsOurTool(call?.name, call?.input);
+      if (seen) {
+        calls.push({
+          unitIndex: unit.index,
+          entries: [],
+          unreadable: true,
+          name: String(call?.name ?? ""),
+          acknowledged: acknowledges(units, unit.index),
+        });
       }
     }
   }
   return calls;
+}
+
+/**
+ * A tool result carrying our own answer proves that a compress call happened. If no call could be
+ * read out of the units just before it, this host replays that call in a shape nothing here
+ * knows - and that shape has to be named, because the alternative is the failure mode measured on
+ * omp 2026-11-07: 491 refs, a tool answering "解析到 1 段" every time, and not one fold settled.
+ */
+export function unknownShapes(units, calls) {
+  const settled = new Set(calls.filter((c) => c.entries.length > 0).map((c) => c.unitIndex));
+  const shapes = [];
+  for (let at = 0; at < units.length; at += 1) {
+    if (!String(units[at]?.text || "").includes(COMPRESS_ACK)) continue;
+    const names = [];
+    for (let back = at - 1; back >= 0 && back >= at - 4; back -= 1) {
+      const calls_ = units[back]?.toolCalls || [];
+      if (!calls_.length) continue;
+      if (settled.has(units[back].index)) { names.length = 0; break; }
+      names.push(...calls_.map((c) => String(c?.name ?? "?")));
+    }
+    if (names.length) shapes.push([...new Set(names)].join("、"));
+  }
+  return shapes;
 }
 
 /**
@@ -240,6 +275,18 @@ function deviceCompressPayload(name, input) {
     return typeof payload === "string" ? payload : JSON.stringify(payload);
   }
   return null;
+}
+
+/** The tool a device call aims at, for reporting a shape this plugin could not read. */
+export function deviceTarget(name, input) {
+  if (isCompressToolName(name)) return "";
+  const args = parseJsonObject(input);
+  if (!args) return "";
+  for (const key of DEVICE_TARGET_KEYS) {
+    const target = args[key];
+    if (typeof target === "string" && target) return target;
+  }
+  return "";
 }
 
 function parseJsonObject(input) {

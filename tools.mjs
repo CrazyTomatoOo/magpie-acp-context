@@ -17,7 +17,11 @@ import { versionLine } from "./src/version.mjs";
 const COMPRESS_ARGS = {
   type: "object",
   properties: {
-    content: { type: "string", description: "要折叠的范围:每行 `m00002–m00005 主题`,空行后是这一段的中文摘要。" },
+    content: {
+      type: "string",
+      description:
+        "要折叠的范围。一行 `m00002–m00005 主题`,紧接的下一行就是这一段的中文摘要;多段之间用空行分隔。摘要至少要 40 字节,写成普通字符串字面量。",
+    },
   },
   required: ["content"],
 };
@@ -66,7 +70,7 @@ function compressTool(cfg) {
     args: COMPRESS_ARGS,
     execute(args) {
       const ranges = parseCompressPayload(args?.content ?? "");
-      if (!ranges.length) return "没有解析到范围。每行写成 `m00002–m00005 主题`,空行后接摘要正文。";
+      if (!ranges.length) return "没有解析到范围。一行写 `m00002–m00005 主题`,紧接的下一行写摘要正文;多段之间才用空行分隔,摘要至少 40 字节。";
       const lines = ranges.map((r) => {
         const bytes = budget(r.summary);
         const tooLong = bytes > cfg.maxSummaryChars;

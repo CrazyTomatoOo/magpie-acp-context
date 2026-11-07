@@ -20,20 +20,26 @@ import { loadConfig } from "./src/config.mjs";
 import { refusalNote } from "./src/maintenance.mjs";
 import { adapterFor, advertisedToolNames } from "./src/protocol.mjs";
 import { openSession } from "./src/store.mjs";
-import { canCallOwnTools, compressCalls, MIN_SUMMARY_BYTES } from "./src/compress.mjs";
+import { canCallOwnTools, compressCalls, deviceTarget, MIN_SUMMARY_BYTES, unknownShapes } from "./src/compress.mjs";
 import { blockIdOf, formatRef, neutralizeMarkers, sha256, utf8Bytes } from "./src/text.mjs";
 import { decideNudge, nudgeText, NUDGE_NONE } from "./src/nudge.mjs";
 import { estimateBodyTokens, readRefusal, readUsage } from "./src/usage.mjs";
 
+// The one sentence a model reads before its first fold. It names the tool's real argument
+// (`content`, one header line and a summary line) because a model that guesses the shape pays a
+// wasted turn for it: measured 2026-11-07, a note promising startRef/endRef/topic/summary sent a
+// model into exactly that.
 const PROMPT = [
   "[acp] 每条历史消息前的 [mNNNNN] 是它的 ref。",
-  "要把一段旧历史折成摘要时,调用 compress 工具,给出 startRef、endRef、topic、summary;",
+  "要把一段旧历史折成摘要时,调用 compress 工具,参数 content 写成:",
+  "第一行 `m00002–m00005 主题`,紧接的下一行是这一段的中文摘要(至少 40 字节);",
+  "多段之间用空行分隔。摘要要写成普通字符串字面量,不要用变量拼接。",
   "下一次请求里那段历史会被你的摘要替代。只折叠你已经不再需要原文的细节,",
   "不要把一次工具调用和它的结果切开。",
 ].join("");
 
 /** `foldableFrom`/`foldableTo` are refs already (`m00001`), never numbers: the note is display text. */
-export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], foreign = [], rejected = [], refusal = "", minRangeBytes = 0 }) {
+export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], foreign = [], rejected = [], unrecognized = [], refusal = "", minRangeBytes = 0 }) {
   const base = PROMPT;
   const parts = [
     foldableFrom == null || foldableTo == null
@@ -53,6 +59,14 @@ export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], 
     // window rule refuses). Saying so beats a silent no-op.
     parts.push(
       `历史里有 ${skipped.length} 个 compress 调用引用了本插件没有发过的 ref(${skipped.slice(0, 3).join("、")}${skipped.length > 3 ? " 等" : ""}),无法按内容结算,已跳过;请用上面给出的范围重新调用。`,
+    );
+  }
+  if (unrecognized.length) {
+    // Our own answer without a readable call in front of it: the host replays this tool in a
+    // shape nothing here knows. Naming the shape is the only thing that shortens the next
+    // report from "折叠没生效" to "这个宿主用 <shape> 重放调用".
+    parts.push(
+      `历史里有 ${unrecognized.length} 次 compress 已经执行,但读不出对应的调用(宿主用 ${unrecognized.slice(0, 3).join("、")} 重放,或该调用已被截断),这些折叠不会结算;请把这句话连同宿主名反馈给插件作者。`,
     );
   }
   if (rejected.length) {
@@ -174,9 +188,25 @@ export function planFolds({ units, refs, session, cfg }) {
   // The window ends at a citable message, and a range that ends there keeps its own tool result:
   // the pair belongs to the same side of the cut, so it may reach one unit past the end.
   const windowEnd = window ? pairSafe(units, window.to, window.to).end : -1;
+  // A call the model already moved past is not a live complaint: once a later fold has settled,
+  // an older failing call is history, and repeating its refusal every turn is noise the model
+  // pays for (measured 2026-11-07: a rejected 28-byte call kept re-announcing itself long after
+  // the range had been folded successfully).
+  const settled = session.folds();
+  const settledEnd = settled.length ? idToIndex.get(settled[settled.length - 1].endRef) : undefined;
   for (const call of compressCalls(units)) {
+    if (settledEnd !== undefined && call.unitIndex < settledEnd) continue;
     if (call.unreadable) {
-      rejected.push(`${refs[units[call.unitIndex]?.blockId] ?? "?"}:折叠写在 exec 脚本里,content 参数不是字面量,读不出来`);
+      // The one report that turns a lane's silent no-fold into a sentence a reader can act on:
+      // it names the shape the host used, so a new client costs one line of diagnosis.
+      const where = refs[units[call.unitIndex]?.blockId] ?? "?";
+      const args = (units[call.unitIndex]?.toolCalls || []).find((c) => String(c?.name ?? "") === call.name)?.input;
+      const target = deviceTarget(call.name, args);
+      rejected.push(
+        target
+          ? `${where}:调用被重放成设备调用(${call.name} → ${target}),载荷不是可读的 content,settle 不了`
+          : `${where}:调用形状为 ${call.name || "?"},载荷读不出来(要么写在脚本里且不是字面量,要么参数不是 compress 的 content),settle 不了`,
+      );
       continue;
     }
     if (!call.acknowledged) {
@@ -239,7 +269,8 @@ export function planFolds({ units, refs, session, cfg }) {
       });
     }
   }
-  return { created, window, unresolved: [...new Set(unresolved)], foreign: [...new Set(foreign)], rejected: [...new Set(rejected)] };
+  const unrecognized = unknownShapes(units, compressCalls(units));
+  return { created, window, unresolved: [...new Set(unresolved)], foreign: [...new Set(foreign)], rejected: [...new Set(rejected)], unrecognized: [...new Set(unrecognized)] };
 }
 
 /**
@@ -334,8 +365,8 @@ export async function onRequest(body, ctx) {
     for (let i = 0; i < units.length; i += 1) units[i].blockId = ids[i];
     for (let i = 0; i < units.length; i += 1) units[i].ref = refs[ids[i]];
 
-    const { created, window, unresolved, foreign, rejected } = planFolds({ units, refs, session, cfg });
-    if (cfg.debug) console.error("[magpie-acp-context] plan", JSON.stringify({ session: sessionKeyOf(ctx), units: units.length, calls: compressCalls(units).length, window, created: created.length, unresolved, foreign, rejected, folds: session.folds().length }));
+    const { created, window, unresolved, foreign, rejected, unrecognized } = planFolds({ units, refs, session, cfg });
+    if (cfg.debug) console.error("[magpie-acp-context] plan", JSON.stringify({ session: sessionKeyOf(ctx), units: units.length, calls: compressCalls(units).length, window, created: created.length, unresolved, foreign, rejected, unrecognized, folds: session.folds().length }));
     if (created.length) {
       session.withLock(() => session.recordFolds(created, ({ blockId, role, text }) => session.storeOriginal(blockId, { role, text, ref: refs[blockId], at: Date.now() })));
     }
@@ -418,6 +449,7 @@ export async function onRequest(body, ctx) {
         skipped: unresolved,
         foreign,
         rejected,
+        unrecognized,
         refusal: refusalNote(refusal),
         minRangeBytes: cfg.minRangeBytes,
       });
