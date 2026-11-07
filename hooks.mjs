@@ -245,19 +245,34 @@ export async function onRequest(body, ctx) {
   let cfg;
   try {
     cfg = loadConfig(ctx?.options);
-    if (!cfg.enabled) return undefined;
+    // Every gate below returns the request untouched. That silence is the hardest thing to
+    // debug from the outside - a client sees no refs and no fold and nothing says why - so
+    // under `debug` each one names itself before it steps aside.
+    if (!cfg.enabled) {
+      if (cfg.debug) console.error("[magpie-acp-context] skip: the plugin is off");
+      return undefined;
+    }
     // Canary gate: an agent left out of the list never reaches the store, so its requests
     // are byte-identical to what the client sent.
-    if (!allowsAgent(cfg, ctx) || !allowsOrigin(cfg, ctx)) return undefined;
+    if (!allowsAgent(cfg, ctx) || !allowsOrigin(cfg, ctx)) {
+      if (cfg.debug) console.error(`[magpie-acp-context] skip: agent=${ctx?.agent} origin=${ctx?.origin} is not in the canary list`);
+      return undefined;
+    }
     // Tool gate: the prompt asks for a tool magpie serves, so a client that declares tools,
     // none of ours, and no code surface that could reach them can never obey it - it only
     // pays for the prompt and the `[mNNNNN]` prefixes while nothing can ever fold. A request
     // with no declaration list at all is not evidence either way (older hosts, probes) and
     // is served as before.
     const declared = advertisedToolNames(body);
-    if (declared && !canCallOwnTools(declared)) return undefined;
+    if (declared && !canCallOwnTools(declared)) {
+      if (cfg.debug) console.error(`[magpie-acp-context] skip: none of the ${declared.length} declared tools can reach ours: ${JSON.stringify(declared.slice(0, 12))}`);
+      return undefined;
+    }
     const adapter = adapterFor(ctx?.protocol);
-    if (!adapter || !adapter.unitArray(body)) return undefined;
+    if (!adapter || !adapter.unitArray(body)) {
+      if (cfg.debug) console.error(`[magpie-acp-context] skip: protocol ${ctx?.protocol} has no readable body`);
+      return undefined;
+    }
 
     const units = adapter.read(body);
     if (units.length === 0) return undefined;
