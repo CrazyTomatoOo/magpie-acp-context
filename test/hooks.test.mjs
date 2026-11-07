@@ -3,6 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { onRequest, onResponse } from "../hooks.mjs";
+import { scanStore } from "../src/maintenance.mjs";
+import { scanSkips } from "../src/skips.mjs";
 import { COMPRESS_ACK } from "../src/compress.mjs";
 
 const filler = (n) => "x".repeat(n);
@@ -902,3 +904,82 @@ describe("a fold that cannot settle says why", () => {
   });
 });
 
+describe("what the ledger records for the status report", () => {
+  const readState = (options) => JSON.parse(readFileSync(join(options.store.dir, "sessions", "s1.json"), "utf8"));
+
+  test("a fold keeps when it happened and how big its summary is", async () => {
+    const options = opts();
+    const before = Date.now();
+    await onRequest(chatHistory(), ctxOf(options));
+    const fold = readState(options).folds[0];
+    expect(fold.at).toBeGreaterThanOrEqual(before);
+    expect(fold.summaryBytes).toBe(Buffer.byteLength(fold.summary, "utf8"));
+    expect(fold.bytes).toBeGreaterThan(fold.summaryBytes);
+  });
+
+  test("every request appends a turn, and the ring stops at 20", async () => {
+    const options = opts();
+    for (let i = 0; i < 23; i += 1) await onRequest(chatHistory({ includeCompress: false }), ctxOf(options));
+    const turns = readState(options).turns;
+    expect(turns).toHaveLength(20);
+    expect(turns[turns.length - 1].seq).toBe(23);
+  });
+
+  test("the turn says how many folds rendered and where the next window is", async () => {
+    const options = opts();
+    await onRequest(chatHistory(), ctxOf(options));
+    const created = readState(options).request;
+    expect(created.applied).toBe(1); // the turn that creates a fold already renders it
+    expect(created.folds).toBe(1);
+    // a later request keeps rendering the same fold: one fold on file, one fold applied
+    await onRequest(chatHistory({ includeCompress: false }), ctxOf(options));
+    const { request } = readState(options);
+    expect(request.applied).toBe(1);
+    expect(request.folds).toBe(1);
+  });
+
+  test("a fold the client stored as a marker still counts as rendered after its anchors are gone", async () => {
+    const options = opts();
+    await onRequest(chatHistory(), ctxOf(options));
+    const fold = readState(options).folds[0];
+    // What a host that persists our marker sends next turn: the marker text, no originals.
+    const stored = {
+      model: "x",
+      messages: [
+        { role: "user", content: `[acp] ${fold.startRef}–${fold.endRef} ${fold.topic}\n${fold.summary}` },
+        { role: "user", content: "继续" },
+      ],
+    };
+    await onRequest(stored, ctxOf(options));
+    const { request } = readState(options);
+    expect(request.applied).toBe(1);
+    expect(request.folds).toBe(1);
+  });
+
+  test("a refused fold leaves its reason in the turn record", async () => {
+    const options = opts();
+    await onRequest(chatHistory({ compress: "m00001–m00001 太短\n只有一点点内容,不到下限,折不了,但这条摘要本身够长以便通过字节下限校验。" }), ctxOf(options));
+    const { request } = readState(options);
+    expect(request.rejected.join(" ")).toContain("minRangeBytes");
+  });
+
+  test("a gated request leaves a skip record instead of silence", async () => {
+    const options = opts();
+    const blocked = ctxOf(options);
+    blocked.agent = "review-bot";
+    const body = chatHistory({ includeCompress: false });
+    body.tools = [{ type: "function", function: { name: "task_done" } }];
+    const out = await onRequest(body, blocked);
+    expect(out).toBeUndefined();
+    const skips = scanSkips(options.store.dir);
+    expect(skips).toHaveLength(1);
+    expect(skips[0].reason).toContain("工具门");
+  });
+
+  test("turning the plugin off is recorded too, so 'nothing happened' has a reason", async () => {
+    const options = opts({ enabled: false });
+    expect(await onRequest(chatHistory(), ctxOf(options))).toBeUndefined();
+    expect(scanSkips(options.store.dir)[0].reason).toBe("开关关着");
+    expect(scanStore(options.store.dir).sessions).toHaveLength(0);
+  });
+});

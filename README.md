@@ -61,7 +61,7 @@ to every agent at `/mcp/magpie/tools`:
 | `<short>_compress` | parses the payload into ranges and tells the model what it wrote; the fold itself is settled by the hook on the next request. The call is recognised however the host replays it — a bare `compress`, an MCP wrapper (`mcp__<server>__compress`), a slash namespace, a call made inside an exec script, or a generic device call naming the tool in its arguments (`write {path:"xd://…_compress"}`) |
 | `<short>_decompress` | returns the original text of a folded block, by block id or by the ref it was shown under |
 | `<short>_search_context` | substring + term-frequency search over folded originals |
-| `<short>_acp_status` | store size, one line per session (refs, folds, growth since the last fold against the nudge line, billed prompt tokens, last nudge), plus a second line when that session's last turn never landed — a provider reason that names a ceiling is quoted and says the host has to compact first; a failure with no reason (magpie forwards none, and an aborted turn looks identical) states the fact and only adds the compaction advice once the session has failed twice in a row; `{evict:true}` runs eviction |
+| `<short>_acp_status` | the observation surface — see [What acp_status shows](#what-acp_status-shows). Store size and gate state, then per session: protocol/model, this turn's units and bytes, context size against what the provider actually billed (plus cache reads), the last two turns side by side, how much of the ledger the folds cover, every fold with its original→summary bytes and when it was made, how many folds rendered this turn against how many are dormant, the advertised foldable window, and why the last compress call did not take effect. Arguments: `{session, limit, turns, folds, json, evict}` |
 
 `<short>` is the plugin's short name — the folder name it was added from, capped at 24
 characters. Install it as `magpie-acp-context` to get `magpie-acp-context_decompress`.
@@ -97,6 +97,47 @@ hook cannot do: the hook sees one request and one reply under a 1 s default budg
 it returns can inject a tool result into the stream. The client executes the tool; the result becomes an ordinary tool
 message; the hook reads that message on the next turn and settles the fold.
 
+## What `acp_status` shows
+
+bili's `acp_status` was the surface people trusted because it answered, in one call, the four
+questions a compression session raises: *how big is this request, is the ledger keeping up, did
+the folds actually render, and if nothing folded — why not.* This plugin answers the same four,
+from the same single renderer that `magpie-acp status` prints, so the terminal and the
+conversation can never disagree.
+
+```
+· 01a1b459-… · refs=1,216 folds=5 evicted=0 · 本轮≈444,612 tok,计费 prompt=134,076 tok · 收到 usage 200 次 · nudge=hint@444,612 tok
+  chat · volcengine-apigw/deepseek-v4.1-flash · 16:00 · units=903 · 请求 1,724,938 字节 · 上下文≈444,612 tok · 计费 prompt=134,076 tok(缓存命中 58,880)
+  走势:上下文 402,113 → 444,612(+42,499) · 计费 122,940 → 134,076(+11,136)
+  折叠账:5 条覆盖 744/1,216 条 ref(61%) · 原文 767,738 字节 → 摘要 7,751 字节,省下 ≈217,139 tok
+  折叠明细:
+    1. m00387–m00421 「拒绝检测」 86,384 → 1,060 字节(-99%) 100 条 15:00 block 4e4503525b53
+  本轮渲染 5 个折叠 · 可折窗口 m01219–m01361
+  上次折叠没生效:m00005–m00009:这段只有 1,200 字节,低于 minRangeBytes=5000
+```
+
+Every line is derived from the ledgers on disk; the only approximation is the marked
+byte→token conversion (3.5 bytes per token, the same constant the nudge uses). The report
+deliberately separates **rendered** from **on file**: a host that persists our marker drops the
+original anchors, so a fold can be very much alive (its summary in every request) while the
+anchor scan sees nothing — the omp lane measured 5 folds, every summary visible, zero counted,
+until "rendered" also counted markers found in the transcript.
+
+### Why nothing folded
+
+The gates that protect a request all return it untouched, which from outside is
+indistinguishable from "this plugin is not installed". Under `debug` each gate names itself on
+the host's stderr — invisible to a TUI user — so every skip is also recorded on disk:
+`<store>/skips/<key>.json`, a ring of the last 20 reasons per session (same reason twice in a row
+collapses into one row with a count). `acp_status` lists them under the sessions;
+`magpie-acp skips` reads them directly, `--forget` clears them. Skips are kept OUT of the session
+ledger on purpose: a skipped request must not create a session entry that would then appear in
+`acp_status` with a ref space it never uses.
+
+What lands there: the switch being off, the canary list not covering this caller, the tool gate
+(a client that cannot reach our tools), a protocol whose body cannot be read, and an exception
+inside the hook itself (the one case where the request went out uncompressed with nothing said).
+
 ## Operator CLI
 
 `node cli.mjs <command>` (or `./cli.mjs`, Node >= 22, no dependencies). It reads the store
@@ -104,8 +145,12 @@ directly, so it works when magpie is not running:
 
 | command | what it does |
 |---|---|
-| `status [--limit N] [--growth-floor N] [--json]` | the same lines `acp_status` prints for the agent |
-| `block <id\|ref>` | the original text of one folded block |
+| `status [--limit N] [--session KEY] [--turns N] [--folds N] [--growth-floor N] [--json]` | the same lines `acp_status` prints for the agent |
+| `folds [session] [--json]` | the fold table with savings per fold |
+| `turns [session] [--limit N] [--json]` | the last N requests of a session: units, bytes, context, billed, folds rendered |
+| `skips [--limit N] [--json] [--forget]` | why the hook stepped aside — the gate and the client shape, newest first |
+| `search <query> [--limit N] [--json]` | substring search over the folded originals |
+| `block <id\|ref>` (alias `show`) | the original text of one folded block |
 | `forget <id\|ref>... [--yes]` | delete originals on purpose; dependent folds become holes, not lies |
 | `unlock [session]` | remove a `*.lock` a killed hook left behind (hooks only wait 120 ms) |
 | `reconcile [--apply] [--ttl-days N]` | report — and with `--apply` repair — folds whose original vanished, orphan blocks, and refs of dead sessions |
@@ -202,8 +247,12 @@ hint never appears.
 ## What lives on disk
 
 `<store.dir>/sessions/<sessionKey>.json` — `{v, next, seq, refs: {blockId: ref}, folds: [...],
-usage: [...], nudge, request}`, written under a `*.lock` file with tmp+rename. Losing it
-degrades to "no compression", never to a wrong request. Folded originals live in one
+usage: [...], turns: [...], nudge, request}`, written under a `*.lock` file with tmp+rename.
+Losing it degrades to "no compression", never to a wrong request. `folds[]` entries carry their
+own `at` and `summaryBytes` (the savings the report prints), `turns[]` is a ring of the last 20
+requests (units, bytes, context, billed, folds rendered, foldable window, and the reasons the
+last compress calls did not settle), and `<store.dir>/skips/<sessionKey>.json` holds the last 20
+reasons the hook stepped aside. Folded originals live in one
 content-addressed directory, `<store.dir>/blocks/<blockId>.json`, because a tool call has no
 session of its own.
 

@@ -14,6 +14,7 @@ import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync,
 import { join } from "node:path";
 import { blocksDir } from "./blocks.mjs";
 import { cleanup } from "./store.mjs";
+import { scanSkips } from "./skips.mjs";
 
 const MAX_SCAN = 50_000;
 
@@ -79,6 +80,22 @@ export function scanStore(storeDir) {
       request: state.request ?? null,
       nudge: state.nudge ?? null,
       refusal: state.refusal ?? null,
+      // The report needs the folds themselves (bytes replaced, when, whether the original is
+      // still on disk) and the turn ring (the direction the session is growing in), not just
+      // their counts.
+      foldList: (state.folds ?? []).map((f) => ({
+        id: f.id,
+        startRef: f.startRef,
+        endRef: f.endRef,
+        topic: f.topic ?? "",
+        bytes: f.bytes ?? 0,
+        summaryBytes: f.summaryBytes ?? null,
+        summary: typeof f.summary === "string" ? f.summary : "",
+        blocks: Array.isArray(f.blocks) ? f.blocks : [],
+        at: f.at ?? null,
+        evictedAt: f.evictedAt ?? null,
+      })),
+      turns: Array.isArray(state.turns) ? state.turns : [],
     };
   });
   const blocks = blockFiles(storeDir);
@@ -87,6 +104,7 @@ export function scanStore(storeDir) {
     sessions: sessions.sort((a, b) => (b.request?.at ?? 0) - (a.request?.at ?? 0)),
     blocks,
     bytes: blocks.reduce((n, b) => n + b.size, 0),
+    skips: scanSkips(storeDir),
   };
 }
 
@@ -211,66 +229,11 @@ export function unlock(storeDir, key = null) {
   return { removed };
 }
 
-/** One line per session, the same shape the agent sees from `acp_status`. */
-export function renderStatus({ storeDir, sessions, blocks, bytes }, { growthFloor = 50000, limit = 5 } = {}) {
-  const num = (n) => Number(n ?? 0).toLocaleString("en-US");
-  const out = [`store ${storeDir}:${num(blocks.length)} 个块 / ${num(bytes)} 字节;${num(sessions.length)} 个会话;折叠提醒线 = 增长 ${num(growthFloor)} tokens。`];
-  if (!sessions.length) out.push("还没有会话记录。");
-  for (const s of sessions.slice(0, limit)) {
-    out.push(
-      [
-        `· ${s.key}`,
-        `refs=${num(s.refs)} folds=${num(s.folds)} evicted=${num(s.evictedFolds)}`,
-        `本轮≈${num(s.request?.tokens ?? 0)} tok,计费 prompt=${num(s.lastUsage?.input ?? 0)} tok`,
-        `收到 usage ${num(s.usage)} 次`,
-        `nudge=${s.nudge ? `${s.nudge.kind}@${num(s.nudge.tokens ?? 0)} tok` : "无"}`,
-      ].join(" · "),
-    );
-    if (s.refusal) out.push(`  ${refusalLine(s.refusal)}`);
-  }
-  return out.join("\n");
-}
 
 export { cleanup };
 
-/**
- * What a refused turn means, said once. A refusal is the only proof this plugin ever gets that
- * a session is already bigger than its window: the model never saw the prompt, so it never had
- * a chance to fold, and asking it harder cannot help - the host has to compact first.
- */
-export function refusalLine(refusal) {
-  const num = (n) => Number(n ?? 0).toLocaleString("en-US");
-  const pad = (n) => String(n).padStart(2, "0");
-  const d = refusal.at ? new Date(refusal.at) : null;
-  const when = d && !Number.isNaN(d.getTime())
-    ? `(${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())})`
-    : "";
-  const size = refusal.tokens ? `本轮 ≈${num(refusal.tokens)} tokens` : "本轮大小未知";
-  const strikes = Number(refusal.strikes ?? 0);
+// The display half lives in report.mjs (one renderer for the tool and the CLI); re-exported here
+// so `import { renderStatus, scanStore } from "./maintenance.mjs"` stays the single entry point.
+export { refusalLine, refusalNote, renderSkips, renderStatus, sessionReport } from "./report.mjs";
 
-  // A reason with a ceiling in it is proof. Say it plainly, and say the fold cannot help.
-  if (refusal.contextLimit) {
-    const why = String(refusal.text || "理由是上下文超限").replace(/[。.]+$/, "");
-    const ceiling = refusal.limit ? `上限约 ${num(refusal.limit)} tokens。` : "";
-    const here = refusal.tokens ? `本轮 ≈${num(refusal.tokens)} tokens。` : "";
-    return `上游拒了上一轮${when}:${why}。${ceiling}${here}折叠救不了这一轮 —— 请求在模型看到提示之前就被拒了,先在宿主里压缩一次(compaction),再继续。`;
-  }
 
-  // No reason arrives: magpie forwards nothing on a failed turn (measured 2026-11-07: `reply` is
-  // null, `ctx.state` empty), and an aborted request (omp cancels with 499) looks exactly like a
-  // provider rejection from here. So state the fact and let repetition speak, never assert a cause.
-  const why = refusal.text ? `${refusal.text}。` : "magpie 在失败回合不转发原因。";
-  if (strikes >= 2) {
-    return `上一轮请求又没拿到回复${when};${size},连续 ${strikes} 轮都如此。${why}若每一轮都在同一个体量上失败,通常是上下文上限 —— 那种情况下折叠救不了(请求在模型看到提示之前就被拒了),先在宿主里压缩一次(compaction)。`;
-  }
-  return `上一轮请求没拿到回复${when};${size}。${why}单次失败多半是取消或上游抖动,下一轮成功就会清掉。`;
-}
-
-/**
- * The note is context the model pays for on every turn, so it only carries a refusal that has
- * something to act on: a proven ceiling, or the repetition that makes a stuck session evident.
- */
-export function refusalNote(refusal) {
-  if (!refusal) return "";
-  return refusal.contextLimit || Number(refusal.strikes ?? 0) >= 2 ? refusalLine(refusal) : "";
-}

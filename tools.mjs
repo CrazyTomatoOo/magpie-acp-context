@@ -12,6 +12,7 @@ import { COMPRESS_ACK, MIN_SUMMARY_BYTES, parseCompressPayload } from "./src/com
 import { findBlock, listBlocks, searchBlocks } from "./src/blocks.mjs";
 import { cleanup } from "./src/store.mjs";
 import { renderStatus, scanStore } from "./src/maintenance.mjs";
+import { reportData } from "./src/report.mjs";
 import { versionLine } from "./src/version.mjs";
 
 const COMPRESS_ARGS = {
@@ -46,8 +47,11 @@ const SEARCH_ARGS = {
 const STATUS_ARGS = {
   type: "object",
   properties: {
-    session: { type: "string", description: "只看这个会话;" },
+    session: { type: "string", description: "只看这个会话(键名,如宿主会话 id);不带就列最近几个。" },
     limit: { type: "number", description: "最多列几个会话,默认 5。" },
+    turns: { type: "number", description: "每会话最多回看几轮走势,默认 5。" },
+    folds: { type: "number", description: "每会话最多列几条折叠明细,默认 10。" },
+    json: { type: "boolean", description: "返回结构化 JSON,便于脚本消费。" },
     evict: { type: "boolean", description: "顺带做一次回收(按 maxBytes / ttlDays)。" },
   },
 };
@@ -133,12 +137,18 @@ function searchTool(cfg) {
 
 function statusTool(cfg) {
   return {
-    description: "看一眼上下文用量:每轮被计费的 prompt tokens、折叠数、nudge 状态、store 体积。",
+    description:
+      "看一眼上下文用量与折叠账:被计费的 prompt tokens、本轮渲染了几个折叠、折叠省下的字节与 token、可折窗口、上次折叠为什么没生效、开关与工具门状态、store 体积。带 session 看单个会话。",
     args: STATUS_ARGS,
     async execute(args) {
       const scan = scanStore(cfg.storeDir);
       const wanted = args?.session ? scan.sessions.filter((s) => s.key === args.session) : [];
       const shown = wanted.length ? wanted : scan.sessions;
+      const growthFloor = Number(cfg.nudge.growthFloor) || 50000;
+      const limit = Number(args?.limit ?? 5);
+      if (args?.json) {
+        return JSON.stringify(reportData({ ...scan, sessions: shown }, { growthFloor, limit }), null, 2);
+      }
       const out = [
         [
           `开关:${cfg.enabled ? "开" : "关"}`,
@@ -147,7 +157,12 @@ function statusTool(cfg) {
           `agents=${cfg.agents.length ? cfg.agents.join(",") : "全部"}`,
           `origins=${cfg.origins.join(",")}`,
         ].join(" · "),
-        renderStatus({ ...scan, sessions: shown }, { growthFloor: Number(cfg.nudge.growthFloor) || 50000, limit: Number(args?.limit ?? 5) }),
+        renderStatus({ ...scan, sessions: shown }, {
+          growthFloor,
+          limit,
+          turns: Number(args?.turns ?? 5),
+          foldLimit: Number(args?.folds ?? 10),
+        }),
       ];
       if (!wanted.length && args?.session) out.push(`没有这个会话:${args.session}。用 acp_status 不带参数列出现有会话。`);
       if (!cfg.enabled) out.push("关着时不会压缩任何请求;打开:magpie plugin options magpie-acp-context '{\"enabled\":true}'。");

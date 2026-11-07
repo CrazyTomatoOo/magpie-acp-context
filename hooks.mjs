@@ -19,6 +19,7 @@
 import { loadConfig } from "./src/config.mjs";
 import { refusalNote } from "./src/maintenance.mjs";
 import { adapterFor, advertisedToolNames } from "./src/protocol.mjs";
+import { recordSkip } from "./src/skips.mjs";
 import { openSession } from "./src/store.mjs";
 import { canCallOwnTools, compressCalls, deviceTarget, MIN_SUMMARY_BYTES, unknownShapes } from "./src/compress.mjs";
 import { blockIdOf, formatRef, neutralizeMarkers, sha256, utf8Bytes } from "./src/text.mjs";
@@ -91,6 +92,30 @@ export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], 
 export function markerText(fold) {
   const head = `[acp] ${fold.startRef}–${fold.endRef}${fold.topic ? ` ${fold.topic}` : ""}`;
   return `${head}\n${neutralizeMarkers(fold.summary)}`;
+}
+
+/** The head line every marker of this fold starts with (`[acp] m00001–m00002 …`). */
+function markerHead(fold) {
+  return `[acp] ${fold.startRef}–${fold.endRef}`;
+}
+
+/**
+ * Folds the model is actually reading this turn.
+ *
+ * Two shapes mean the same thing, and both count: the hook replaces the range with a marker
+ * (the anchors are still in the body, `ranges` non-empty), or the client already stored that
+ * marker and dropped the originals — then the anchors are gone, `liveRanges` finds nothing, and
+ * counting only `ranges` reports a session that folds beautifully as "0 rendered, 5 lost".
+ * Measured on the omp lane 2026-11-07: 5 folds, every summary in the visible history, 0 counted.
+ */
+export function renderedFoldCount({ units, folds, ranges }) {
+  const ids = new Set(ranges.map((r) => r.fold.id));
+  for (const fold of folds) {
+    if (ids.has(fold.id)) continue;
+    const head = markerHead(fold);
+    if (units.some((u) => String(u.text ?? "").includes(head))) ids.add(fold.id);
+  }
+  return ids.size;
 }
 
 function sessionKeyOf(ctx) {
@@ -170,7 +195,7 @@ function foldWindow(units, keepRecentTurns) {
   return { from, to };
 }
 
-export function planFolds({ units, refs, session, cfg }) {
+export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
   const idToIndex = new Map();
   for (const unit of units) {
     const ref = refs[unit.blockId];
@@ -313,6 +338,8 @@ export function planFolds({ units, refs, session, cfg }) {
         endBlock,
         topic: String(entry.topic || "").slice(0, 120),
         summary,
+        summaryBytes,
+        at: now,
         bytes,
         blocks: inRange.map((u) => ({ blockId: u.blockId, ref: refs[u.blockId], role: u.role, text: neutralizeMarkers(u.text) })),
       });
@@ -376,12 +403,17 @@ export async function onRequest(body, ctx) {
     // debug from the outside - a client sees no refs and no fold and nothing says why - so
     // under `debug` each one names itself before it steps aside.
     if (!cfg.enabled) {
+      recordSkip(cfg.storeDir, sessionKeyOf(ctx), { reason: "开关关着", detail: "enabled=false" });
       if (cfg.debug) console.error("[magpie-acp-context] skip: the plugin is off");
       return undefined;
     }
     // Canary gate: an agent left out of the list never reaches the store, so its requests
     // are byte-identical to what the client sent.
     if (!allowsAgent(cfg, ctx) || !allowsOrigin(cfg, ctx)) {
+      recordSkip(cfg.storeDir, sessionKeyOf(ctx), {
+        reason: "canary 名单不收这个调用方",
+        detail: `agent=${ctx?.agent ?? "?"} origin=${ctx?.origin ?? "?"}`,
+      });
       if (cfg.debug) console.error(`[magpie-acp-context] skip: agent=${ctx?.agent} origin=${ctx?.origin} is not in the canary list`);
       return undefined;
     }
@@ -392,11 +424,16 @@ export async function onRequest(body, ctx) {
     // is served as before.
     const declared = advertisedToolNames(body);
     if (declared && !canCallOwnTools(declared)) {
+      recordSkip(cfg.storeDir, sessionKeyOf(ctx), {
+        reason: "工具门:声明的工具没有一个能到本插件",
+        detail: declared.slice(0, 6).join(","),
+      });
       if (cfg.debug) console.error(`[magpie-acp-context] skip: none of the ${declared.length} declared tools can reach ours: ${JSON.stringify(declared.slice(0, 12))}`);
       return undefined;
     }
     const adapter = adapterFor(ctx?.protocol);
     if (!adapter || !adapter.unitArray(body)) {
+      recordSkip(cfg.storeDir, sessionKeyOf(ctx), { reason: "这个协议的请求体读不出消息", detail: String(ctx?.protocol ?? "?") });
       if (cfg.debug) console.error(`[magpie-acp-context] skip: protocol ${ctx?.protocol} has no readable body`);
       return undefined;
     }
@@ -471,6 +508,15 @@ export async function onRequest(body, ctx) {
       tokens: contextTokens,
       billed: Number(lastUsage?.input) || 0,
       folds: session.folds().length,
+      // Rendered this turn vs merely on file: a fold the client's own compaction shook loose
+      // renders nothing, and reporting it as "late" instead of "dormant" is a lie in two places.
+      applied: renderedFoldCount({ units, folds: session.folds(), ranges }),
+      foldableFrom: foldable ? units[foldable.from]?.ref ?? null : null,
+      foldableTo: foldable ? units[foldable.to]?.ref ?? null : null,
+      rejected: rejected.slice(0, 3),
+      unresolved: unresolved.slice(0, 3),
+      unrecognized: unrecognized.slice(0, 3),
+      foreign: foreign.length,
     });
     session.save();
 
@@ -510,6 +556,14 @@ export async function onRequest(body, ctx) {
     return next;
   } catch (err) {
     // A gateway hook may never break the request, so this stays a log rather than a throw.
+    try {
+      recordSkip((cfg ?? loadConfig(ctx?.options)).storeDir, sessionKeyOf(ctx), {
+        reason: "钩子自己出错,这一轮原样放行",
+        detail: String(err?.message ?? err).slice(0, 160),
+      });
+    } catch {
+      // failOpen has to survive even a broken error path
+    }
     if (cfg?.debug) console.error("[magpie-acp-context] onRequest failed:", err);
     if (cfg?.failOpen !== false) return undefined;
     throw err;

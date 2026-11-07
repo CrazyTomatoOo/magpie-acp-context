@@ -219,7 +219,9 @@ describe("cli", () => {
     const scan = JSON.parse(out.stdout);
     expect(scan.storeDir).toBe(dir);
     expect(scan.sessions[0].key).toBe("cli1");
-    expect(scan.sessions[0].lastUsage.input).toBe(1234);
+    expect(scan.sessions[0].billedPromptTokens).toBe(1234);
+    expect(scan.sessions[0].contextTokens).toBe(1234);
+    expect(scan.skips).toEqual([]);
   });
 
   test("status prints the same line the agent sees", () => {

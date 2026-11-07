@@ -5,7 +5,13 @@ const LOCK_WAIT_MS = 120;
 
 const MAX_USAGE = 200;
 
-const emptySession = () => ({ v: 1, next: 1, refs: {}, folds: [], usage: [], nudge: null, refusal: null });
+/**
+ * A ring of the last requests, not just the newest one: "is this session growing or was that a
+ * retry?" is a question one number cannot answer, and it is the question a reader actually asks.
+ */
+const MAX_TURNS = 20;
+
+const emptySession = () => ({ v: 1, next: 1, refs: {}, folds: [], usage: [], turns: [], nudge: null, refusal: null });
 
 function paths(dir, key) {
   const root = join(dir, "sessions");
@@ -61,6 +67,7 @@ export function openSession(storeDir, key) {
   const state = existed ? readJson(p.state, emptySession()) : emptySession();
   if (!state.usage) state.usage = [];
   if (!Array.isArray(state.folds)) state.folds = [];
+  if (!Array.isArray(state.turns)) state.turns = [];
   const before = existed ? JSON.stringify(state) : null;
   let dirty = false;
 
@@ -141,6 +148,8 @@ export function openSession(storeDir, key) {
     recordRequest(info) {
       state.seq = Number(state.seq ?? 0) + 1;
       state.request = { ...info, seq: state.seq };
+      state.turns.push({ ...state.request });
+      if (state.turns.length > MAX_TURNS) state.turns.splice(0, state.turns.length - MAX_TURNS);
       dirty = true;
     },
     setNudge(nudge) {
