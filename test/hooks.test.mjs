@@ -499,6 +499,27 @@ describe("folds a real client actually sends", () => {
   });
 });
 
+describe("a fold written inside codex's exec script settles", () => {
+  test("the script's call is read on the responses wire and folded", async () => {
+    const options = opts({ minRangeBytes: 1000 });
+    const script = `const r = await tools.mcp__magpie_acp_context__compress({content:${JSON.stringify("m00001–m00001 第一轮\n用户第一轮的要求。")}}); text(r)`;
+    const body = {
+      model: "gpt-x",
+      input: [
+        { type: "message", role: "user", content: [{ type: "input_text", text: `第一轮 ${filler(2000)}` }] },
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: "好" }] },
+        { type: "custom_tool_call", call_id: "c1", name: "exec", input: script },
+        { type: "custom_tool_call_output", call_id: "c1", output: [{ type: "input_text", text: `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。` }] },
+        { type: "message", role: "user", content: [{ type: "input_text", text: "继续" }] },
+      ],
+    };
+    const out = await onRequest(structuredClone(body), { protocol: "responses", origin: "local", session: "codex1", options });
+    const text = JSON.stringify(out.input);
+    expect(text).toContain("acp]");
+    expect(text).not.toContain(filler(2000));
+  });
+});
+
 describe("a fold that cannot settle says why", () => {
   test("a range under the floor is reported, not silently dropped", async () => {
     const body = {

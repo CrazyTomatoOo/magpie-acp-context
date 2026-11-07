@@ -72,6 +72,38 @@ describe("compress tool names a real client replays", () => {
   });
 });
 
+describe("codex reaches MCP from inside its exec orchestrator", () => {
+  // Measured on codex-cli 0.167 (responses wire, 2026-11-07): the transcript records a call
+  // named `exec` whose argument is JavaScript, and our tool is invoked inside it.
+  const script = (content) =>
+    `const r = await tools.mcp__magpie_acp_context__compress({content:${content}}); text(r)`;
+
+  const withCall = (input) => [
+    { index: 0, role: "user", text: "m00001 读文件", toolCalls: [], stampable: true },
+    { index: 1, role: "assistant", text: "", stampable: false, toolCalls: [{ name: "exec", input }] },
+    { index: 2, role: "tool", text: ACK, toolCalls: [], stampable: false },
+    { index: 3, role: "user", text: "继续", toolCalls: [], stampable: true },
+  ];
+
+  test("a plain string literal is read out of the script", () => {
+    const calls = compressCalls(withCall(script(JSON.stringify("m00002–m00005 早期\n用户要求读 a.txt。"))));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].entries[0]).toMatchObject({ startId: "m00002", endId: "m00005" });
+    expect(calls[0].acknowledged).toBe(true);
+  });
+
+  test("a computed argument is reported instead of guessed", () => {
+    const calls = compressCalls(withCall(script("build()")));
+    expect(calls).toHaveLength(1);
+    expect(calls[0].unreadable).toBe(true);
+    expect(calls[0].entries).toHaveLength(0);
+  });
+
+  test("a script that never touches our tool is not a compress call", () => {
+    expect(compressCalls(withCall("const r = await tools.mcp__magpie_acp_context__acp_status({}); text(r)"))).toHaveLength(0);
+  });
+});
+
 describe("codex CLI's namespace-shaped declaration (#15 lane probe)", () => {
   // Measured on codex-cli 0.166 (responses wire) through a real magpie gateway: the MCP
   // server arrives as one namespace entry and the callable names live one level down.

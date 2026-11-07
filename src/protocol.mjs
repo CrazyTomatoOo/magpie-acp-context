@@ -30,6 +30,11 @@ function blockText(block) {
       return `function_call ${block.name ?? ""} ${asText(block.arguments)}`;
     case "function_call_output":
       return `function_call_output ${partsText(block.output)}`;
+    // Codex's exec orchestrator: the call name is `exec` and the arguments are a script.
+    case "custom_tool_call":
+      return `custom_tool_call ${block.name ?? ""} ${asText(block.input)}`;
+    case "custom_tool_call_output":
+      return `custom_tool_call_output ${partsText(block.output)}`;
     case "image":
     case "input_image":
       return "[image]";
@@ -199,6 +204,12 @@ const responses = {
         return { index, role: "assistant", text: blockText(item), stampable: false, toolCalls: [{ name: item.name, input: item.arguments }] };
       }
       if (item.type === "function_call_output") {
+        return { index, role: "tool", text: blockText(item), stampable: false, toolCalls: [] };
+      }
+      if (item.type === "custom_tool_call") {
+        return { index, role: "assistant", text: blockText(item), stampable: false, toolCalls: [{ name: item.name, input: item.input }] };
+      }
+      if (item.type === "custom_tool_call_output") {
         return { index, role: "tool", text: blockText(item), stampable: false, toolCalls: [] };
       }
       const text = partsText(item.content);

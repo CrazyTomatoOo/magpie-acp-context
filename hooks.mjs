@@ -130,6 +130,10 @@ export function planFolds({ units, refs, session, cfg }) {
   const rejected = [];
   const windowRefs = window ? `${refs[units[window.from]?.blockId] ?? "?"}–${refs[units[window.to]?.blockId] ?? "?"}` : "";
   for (const call of compressCalls(units)) {
+    if (call.unreadable) {
+      rejected.push(`${refs[units[call.unitIndex]?.blockId] ?? "?"}:折叠写在 exec 脚本里,content 参数不是字面量,读不出来`);
+      continue;
+    }
     if (!call.acknowledged) {
       for (const entry of call.entries) foreign.push(`${String(entry.startId).trim()}–${String(entry.endId).trim()}`);
       continue;

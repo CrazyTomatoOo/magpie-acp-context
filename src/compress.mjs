@@ -180,12 +180,131 @@ export function compressCalls(units) {
   const calls = [];
   for (const unit of units) {
     for (const call of unit.toolCalls || []) {
-      if (!isCompressToolName(call?.name)) continue;
-      const entries = parseCompressPayload(call.input);
+      const direct = isCompressToolName(call?.name);
+      const entries = direct ? parseCompressPayload(call.input) : scriptCompressCalls(call?.name, call?.input);
       if (entries.length) {
         calls.push({ unitIndex: unit.index, entries, acknowledged: acknowledges(units, unit.index) });
+        continue;
+      }
+      // A script that mentions our tool but whose arguments could not be read is a call we saw
+      // and still cannot settle. Reporting it beats pretending the model never called.
+      if (!direct && scriptMentionsOurTool(call?.name, call?.input)) {
+        calls.push({ unitIndex: unit.index, entries: [], unreadable: true, acknowledged: acknowledges(units, unit.index) });
       }
     }
   }
   return calls;
+}
+
+/**
+ * Codex reaches MCP tools from inside its `exec` JavaScript orchestrator:
+ * `const r = await tools.mcp__magpie_acp_context__compress({content:"m00002–m00005 …"})`.
+ * The transcript therefore records a call named `exec` whose arguments are a script, not an
+ * object - so the call has to be read out of the script, and only when the content argument is
+ * a plain string literal (anything computed stays unread: guessing a summary is the one thing
+ * this plugin never does).
+ */
+function scriptCompressCalls(name, input) {
+  if (!EXEC_SURFACES.has(canonical(String(name ?? "")))) return [];
+  const text = String(input ?? "");
+  const out = [];
+  const re = /tools\s*\.\s*([A-Za-z0-9_$.]+)\s*\(/g;
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    if (!isCompressToolName(match[1].split(".").pop())) continue;
+    const args = parenthesized(text, re.lastIndex - 1);
+    if (args === null) continue;
+    const content = contentArgument(args);
+    if (content === null) continue;
+    out.push(...parseCompressPayload(content));
+  }
+  return out;
+}
+
+function scriptMentionsOurTool(name, input) {
+  if (!EXEC_SURFACES.has(canonical(String(name ?? "")))) return false;
+  return /tools\s*\.\s*[A-Za-z0-9_$.]*compress/i.test(String(input ?? ""));
+}
+
+/** The text between the parens that open at `openIndex`, honouring string literals. */
+function parenthesized(text, openIndex) {
+  let depth = 0;
+  let quote = null;
+  for (let i = openIndex; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === "\\") {
+        i += 1;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      quote = ch;
+      continue;
+    }
+    if (ch === "(") depth += 1;
+    else if (ch === ")") {
+      depth -= 1;
+      if (depth === 0) return text.slice(openIndex + 1, i);
+    }
+  }
+  return null;
+}
+
+function contentArgument(args) {
+  const at = /\bcontent\s*:\s*/.exec(args);
+  if (!at) return null;
+  let rest = args.slice(at.index + at[0].length);
+  const wrapped = /^JSON\.parse\s*\(/.exec(rest);
+  if (wrapped) rest = rest.slice(wrapped[0].length).trim();
+  return stringLiteral(rest);
+}
+
+function stringLiteral(text) {
+  const quote = text[0];
+  if (quote !== '"' && quote !== "'") return null;
+  let i = 1;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === "\\") {
+      i += 2;
+      continue;
+    }
+    if (ch === quote) {
+      const raw = text.slice(0, i + 1);
+      if (quote === '"') {
+        try {
+          return JSON.parse(raw);
+        } catch {
+          return null;
+        }
+      }
+      return singleQuoted(raw);
+    }
+    i += 1;
+  }
+  return null;
+}
+
+/** Single-quoted literals are not JSON; decode only the escapes that cannot change the text. */
+function singleQuoted(raw) {
+  const body = raw.slice(1, -1);
+  let out = "";
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i];
+    if (ch !== "\\") {
+      out += ch;
+      continue;
+    }
+    const next = body[i + 1];
+    if (next === "n") out += "\n";
+    else if (next === "t") out += "\t";
+    else if (next === "r") out += "\r";
+    else if (next === "\\" || next === "'" || next === '"') out += next;
+    else return null;
+    i += 1;
+  }
+  return out;
 }
