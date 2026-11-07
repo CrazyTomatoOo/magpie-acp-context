@@ -53,6 +53,19 @@ describe("tools", () => {
     expect(out).toContain("m00007–m00009 「部署」");
   });
 
+  test("compress echoes the summary it actually read", async () => {
+    const tool = (await toolsFor({ store: { dir: store() }, maxSummaryChars: 20000 })).compress;
+    const out = await tool.execute({ content: "m00002–m00005 早期需求\n用户要求读文件并给出结论,结论已经说完,原文不再需要逐字保留。" });
+    expect(out).toContain("我读到的是「用户要求读文件并给出结论");
+  });
+
+  test("compress says so when the payload carries a topic and no body", async () => {
+    const tool = (await toolsFor({ store: { dir: store() }, maxSummaryChars: 20000 })).compress;
+    const out = await tool.execute({ content: "m00002–m00005 填充\n填充" });
+    expect(out).toContain("这只有主题,没有正文");
+    expect(out).toContain("摘要 6 字节");
+  });
+
   test("compress states the floor a range has to clear", async () => {
     const tool = (await toolsFor({ store: { dir: store() }, minRangeBytes: 5000 })).compress;
     const out = await tool.execute({ content: "m00002–m00005 早期需求\n用户要求读文件并给出结论,结论已经说完,原文不再需要逐字保留。" });

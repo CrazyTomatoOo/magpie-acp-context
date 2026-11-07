@@ -54,6 +54,11 @@ function budget(text) {
   return new TextEncoder().encode(String(text)).length;
 }
 
+function summaryHead(summary, limit = 60) {
+  const text = String(summary ?? "").replace(/\s+/g, " ").trim();
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
+
 function compressTool(cfg) {
   return {
     description:
@@ -69,7 +74,14 @@ function compressTool(cfg) {
         const note = tooShort
           ? `(少于 ${MIN_SUMMARY_BYTES} 字节,这次折叠会被拒绝 - 被折掉的原文之后只剩摘要)`
           : tooLong ? `(超过 maxSummaryChars=${num(cfg.maxSummaryChars)},会被截断)` : "";
-        return `${r.startId}–${r.endId} ${r.topic ? `「${r.topic}」` : ""}摘要 ${num(bytes)} 字节${note}`;
+        const head = summaryHead(r.summary);
+        const titleOnly = !head || bytes <= budget(r.topic ?? "");
+        return [
+          `${r.startId}–${r.endId} ${r.topic ? `「${r.topic}」` : ""}摘要 ${num(bytes)} 字节${note}`,
+          head
+            ? `  我读到的是「${head}」${titleOnly ? " —— 这只有主题,没有正文:把摘要写在下一行" : ""}`
+            : "",
+        ].filter(Boolean).join("\n");
       });
       const floor = Number(cfg.minRangeBytes);
       return [
