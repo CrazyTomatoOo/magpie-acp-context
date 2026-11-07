@@ -520,6 +520,27 @@ describe("a fold written inside codex's exec script settles", () => {
   });
 });
 
+describe("the nudge names a range a fold can actually cite", () => {
+  test("a history that opens with a system prompt starts the window at the first ref", async () => {
+    // Measured on codex 2026-11-07: the window began at index 0, the system prompt, which never
+    // gets a ref, so the nudge told the model `可折叠范围是 undefined–m00008`.
+    const options = opts({ nudge: { growthFloor: 1 } });
+    const body = {
+      model: "gpt-x",
+      input: [
+        { type: "message", role: "system", content: [{ type: "input_text", text: "你是助手。" }] },
+        { type: "message", role: "user", content: [{ type: "input_text", text: filler(3000) }] },
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: "好" }] },
+        { type: "message", role: "user", content: [{ type: "input_text", text: "继续" }] },
+      ],
+    };
+    const out = await onRequest(structuredClone(body), { protocol: "responses", origin: "local", session: "w1", options });
+    const text = JSON.stringify(out.input);
+    expect(text).toContain("可折叠范围是 m00001–");
+    expect(text).not.toContain("undefined");
+  });
+});
+
 describe("a fold that cannot settle says why", () => {
   test("a range under the floor is reported, not silently dropped", async () => {
     const body = {

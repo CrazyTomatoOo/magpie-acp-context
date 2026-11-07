@@ -111,7 +111,13 @@ function foldWindow(units, keepRecentTurns) {
   const boundary = keep > 0 ? userIdx[Math.max(0, userIdx.length - keep)] : tailStart;
   const to = keep > 0 && userIdx.length <= keep ? -1 : Math.min(boundary, tailStart) - 1;
   if (to < 0) return null;
-  return { from: 0, to };
+  // A window may only name units a fold can cite. System/developer prompts are never numbered,
+  // so a window that starts at index 0 hands the model `undefined` as its first ref - a range it
+  // cannot possibly call compress with. Start at the first unit that actually carries a ref.
+  let from = 0;
+  while (from <= to && !units[from].ref) from += 1;
+  if (from > to) return null;
+  return { from, to };
 }
 
 export function planFolds({ units, refs, session, cfg }) {
