@@ -139,14 +139,14 @@ bili 用三种手段压住客户端压缩(§1 第 3 行),magpie 一个都不做(
 
 ## 9. 实测结果(真机,非源码推断)
 
-判定口径只有两条:**折叠真的结算了**(store 里有 fold 记录、原文可取回),以及**宿主是怎么把调用交上来的**(线上形态决定我们要不要多认一种写法)。全部在 `0.3.2` 上跑。
+判定口径只有两条:**折叠真的结算了**(store 里有 fold 记录、原文可取回),以及**宿主是怎么把调用交上来的**(线上形态决定我们要不要多认一种写法)。全部在 `0.3.2`–`0.3.5` 上跑。
 
 | 宿主 | 线 | 会话键 | 调用形态 | 结果 |
 |---|---|---|---|---|
 | omp | chat | 宿主自己的 UUID(有会话头) | 重放成设备调用 `write {path:"xd://mcp__magpie_acp_context_compress"}` | ✅ 本会话 `folds` 多条,最大一次 m00422–m00709 252,523 字节 |
 | codex | responses | 宿主会话 id | 原生 MCP 工具名,可直接读 | ✅ 一次 `created:1` 折 m00001 5,037 字节;一次被 5,000 字节下限拒(正常) |
 | omo | chat | 宿主会话 id | 原生 MCP 工具名 | ✅ 折 m00001–m00003 共 8,267 字节,原文 `decompress` 可取回 |
-| opencode | chat | 宿主会话 id | exec 脚本 `tools[...].compress` | ⏳ 见下 |
+| opencode | chat | 宿主会话 id | exec 脚本 `tools["magpie-acp-context"].compress({content:…})` | ✅ 5 轮读文件探针(约 200KB 文档),末轮折 m00002–m00022:原文 179,165 字节(21 条)→ 摘要 877 字节;该请求 39 units / 330,911 字节 / 88,802 tokens。结算已证:下一轮问最早那条消息,答「摘要『早期文件阅读与设计文档要点』,由 m00002–m00022 折来」 |
 | claude | anthropic | 宿主会话 id(`x-claude-code-session-id`) | 原生 `mcp__magpie-acp-context__compress` | ✅ 6 轮 `--resume` 探针,折 m00001–m00013:原文 142,047 字节 → 摘要 502 字节(会话 35 units / 281,074 字节) |
 | dsh(headless)| chat | **无会话头**,退化成 `dsh\|`(所有 dsh 会话共用一个 ref 空间) | 原生 MCP 工具名,可直接读 | ✅ 5 轮探针,末轮折 m00016–m00022:原文 15,321 字节 → 摘要 1,149 字节;首次只写 m00016–m00017(626 字节)被下限拒,模型自己看到拒因后改正 |
 
@@ -156,5 +156,6 @@ bili 用三种手段压住客户端压缩(§1 第 3 行),magpie 一个都不做(
 2. **omp 确实发会话头**(store 键是宿主 UUID),`pi / omp / codex 是否发会话头` 这条疑虑对 omp 已解除;dsh 明确不发,键退化成 `dsh|`。
 3. **codex 的默认审批策略会静默吃掉 MCP 调用**(`never` 下直接拒),表现为「模型想折但没折」。验收 codex 车道时必须带 `--dangerously-bypass-approvals-and-sandbox`。
 4. **dsh headless 确实重发历史** —— 先前「headless 不重发、窗口永远为空」是误判:那次读到的 350 计费 token 属于一个辅助请求,同一会话的真实回合是 `units 44 / 204,988 字节 / 计费 56,058 token`。headless 缺的是**会话头**,不是上下文;`keepRecentTurns=3` 在 ≥4 轮之后照常放出窗口,折叠因此可以结算。
+5. **模型会把自己回复也加上 ref 前缀**(codex TUI 里每条回复开头 `[m00035]`、opencode 探针首轮 `[m00010]`、claude 结算回答 `[m00030]`)。这不是插件写进回复的:盖章只发生在请求体的克隆上(`hooks.mjs` `structuredClone(body)` 后 `adapter.stamp`),回复流一个字节没动;是模型把「每条消息前面挂个 ref」当成了说话格式,顺手给自己的消息也编号。代价是每条消息几 token 与主机界面噪音。修法在提示侧(`0.3.5` 起):加一句「只在指代某条历史时写,不要给你的回复加这种前缀」,opencode 实测下一轮回复不再带前缀。不要在出站侧剥这种文本 —— 模型正文里合法的 ref 引用(尤其 compress 摘要的首行范围)必须原样保留。
 
 仍未实测:`opencode compaction.auto` 恢复后的行为;dsh 的 `x-deepseek-harness-compact` 我们确实读不到(magpie hooks 的 `ctx` 不含请求头);`dsh-tui`(交互 only,`--help` 都起 TUI)与 headless 是否共用同一 `dsh|` 键有待在交互会话里确认。
