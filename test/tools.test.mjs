@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import acpTools from "../tools.mjs";
+import { PUBLISHED_URL } from "../src/version.mjs";
 import { onRequest } from "../hooks.mjs";
 
 const store = () => mkdtempSync(join(tmpdir(), "acp-tools-"));
@@ -93,8 +94,6 @@ describe("tools", () => {
     expect(await tool.execute({ query: "完全不存在的东西" })).toContain("没有命中");
   });
 });
-
-const PUBLISHED_URL = "https://raw.githubusercontent.com/CrazyTomatooOo/magpie-acp-context/magpie-plugin/package.json";
 
 describe("acp_status version line", () => {
   const realFetch = globalThis.fetch;
@@ -240,6 +239,28 @@ describe("acp_status version check cache", () => {
     const entry = JSON.parse(readFileSync(cacheFile(dir), "utf8"));
     expect(entry.latest).toBe("0.2.4");
     expect(entry.at).toBeGreaterThan(old);
+  });
+
+  test("a store directory that does not exist yet is created: the write lands, so the one-a-day promise holds", async () => {
+    installCopy("0.2.2");
+    const calls = stubFetch(() => Response.json({ version: "0.2.3" }));
+    const dir = join(mkdtempSync(join(tmpdir(), "acp-version-")), "not", "yet", "there");
+    const first = await (await statusTool(dir)).execute({});
+    expect(first.split("\n")[1]).toBe("version 0.2.2 · latest 0.2.3");
+    expect(JSON.parse(readFileSync(cacheFile(dir), "utf8")).latest).toBe("0.2.3");
+    await (await statusTool(dir)).execute({});
+    expect(calls.length).toBe(1);
+  });
+
+  test("a cached answer stamped in the future is no cache: it is checked now and rewritten with a sane clock", async () => {
+    installCopy("0.2.2");
+    const calls = stubFetch(() => Response.json({ version: "0.2.4" }));
+    const dir = store();
+    writeCache(dir, "0.2.3", Date.now() + 365 * 24 * 60 * 60 * 1000);
+    const out = await (await statusTool(dir)).execute({});
+    expect(calls.length).toBe(1);
+    expect(out.split("\n")[1]).toBe("version 0.2.2 · latest 0.2.4");
+    expect(JSON.parse(readFileSync(cacheFile(dir), "utf8")).at).toBeLessThan(Date.now() + 60000);
   });
 
   test("a cache that cannot be parsed or trusted is no cache: one fetch, the line still prints, the file is rewritten", async () => {
@@ -471,6 +492,29 @@ describe("acp_status version check failure backoff", () => {
     const out = await (await statusTool(dir)).execute({});
     expect(calls.length).toBe(1);
     expect(out.split("\n")[1]).toBe("version 0.2.2 · latest 0.2.3");
+  });
+
+  test("a failure record stamped in the future does not silence the check forever", async () => {
+    installCopy("0.2.2");
+    const dir = store();
+    writeFailure(dir, Date.now() + 365 * 24 * 60 * 60 * 1000);
+    const calls = stubFetch(() => Response.json({ version: "0.2.3" }));
+    const out = await (await statusTool(dir)).execute({});
+    expect(calls.length).toBe(1);
+    expect(out.split("\n")[1]).toBe("version 0.2.2 · latest 0.2.3");
+  });
+
+  test("debug from the plugin option alone reports the failure, without the environment switch", async () => {
+    installCopy("0.2.2");
+    delete process.env.MAGPIE_ACP_DEBUG;
+    const errors = [];
+    console.error = (...args) => errors.push(args);
+    stubFetch(() => Promise.reject(new Error("offline")));
+    const debugTool = async () => (await acpTools(undefined, { debug: true, store: { dir: store() } })).tool.acp_status;
+    const out = await (await debugTool()).execute({});
+    expect(errors.length).toBe(1);
+    expect(errors[0].join(" ")).toContain("offline");
+    expect(out).not.toMatch(/offline|version check/i);
   });
 
   test("a success after a failure replaces the failure record and restores the 24-hour lifetime", async () => {

@@ -112,21 +112,55 @@ describe("acp_status comparison edges", () => {
     expect(out.split("\n")[1]).toBe("version 0.2.9 · latest 0.2.10");
   });
 
-  test("an unparsable published version yields no comparison, the running version only", async () => {
+  test("an unparsable published version is a failed check: no line, no claim of being current", async () => {
     installCopy("0.2.3");
     stubFetch("main");
     const out = await statusOut();
-    expect(out.split("\n")[1]).toBe("version 0.2.3");
+    expect(out.split("\n")[1]).not.toContain("version ");
     expect(out).not.toContain("latest");
     expect(out).not.toContain("local build");
   });
 
-  test("an unparsable running version yields no comparison, the running version only", async () => {
+  test("an unparsable running version is a failed comparison: no line, no claim of being current", async () => {
     installCopy("0.2.x");
     stubFetch("0.2.5");
     const out = await statusOut();
-    expect(out.split("\n")[1]).toBe("version 0.2.x");
+    expect(out.split("\n")[1]).not.toContain("version ");
     expect(out).not.toContain("latest");
     expect(out).not.toContain("local build");
+  });
+
+  test("a published version carrying a newline never reaches the tool result", async () => {
+    installCopy("0.2.3");
+    stubFetch("0.2.4\nstore 伪造");
+    const out = await statusOut();
+    expect(out).not.toContain("伪造");
+  });
+
+  test("an unparsable published version backs off like any other failure", async () => {
+    installCopy("0.2.3");
+    let calls = 0;
+    globalThis.fetch = () => {
+      calls += 1;
+      return Response.json({ version: "main" });
+    };
+    const store = { store: { dir: mkdtempSync(join(tmpdir(), "acp-ver3-unp-")) } };
+    const out1 = await (await acpTools(undefined, store)).tool.acp_status.execute({});
+    const out2 = await (await acpTools(undefined, store)).tool.acp_status.execute({});
+    expect(calls).toBe(1);
+    expect(out1).not.toContain("version ");
+    expect(out2).not.toContain("version ");
+  });
+});
+
+describe("compareVersions prerelease ordering", () => {
+  test("numeric identifiers order below alphanumeric ones", () => {
+    expect(compareVersions("0.2.3-rc.2", "0.2.3-rc.beta")).toBeLessThan(0);
+    expect(compareVersions("0.2.3-rc.beta", "0.2.3-rc.2")).toBeGreaterThan(0);
+  });
+
+  test("a shorter identifier list orders below its extension", () => {
+    expect(compareVersions("0.2.3-rc", "0.2.3-rc.1")).toBeLessThan(0);
+    expect(compareVersions("0.2.3-rc.1", "0.2.3-rc")).toBeGreaterThan(0);
   });
 });

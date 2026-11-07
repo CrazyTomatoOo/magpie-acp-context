@@ -11,12 +11,12 @@
  * one request a day, not one per call; a failed check is remembered for six hours, so a dead
  * route is not retried on every call either.
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const PUBLISHED_URL =
-  "https://raw.githubusercontent.com/CrazyTomatooOo/magpie-acp-context/magpie-plugin/package.json";
+export const PUBLISHED_URL =
+  "https://raw.githubusercontent.com/CrazyTomatoOo/magpie-acp-context/magpie-plugin/package.json";
 const ownManifest = fileURLToPath(new URL("../package.json", import.meta.url));
 
 const CHECK_CACHE_FILE = "version-check.json";
@@ -40,13 +40,15 @@ function readCheckCache(storeDir) {
     return null;
   }
   if (typeof entry?.latest !== "string" || !entry.latest) return null;
-  if (!Number.isFinite(entry.at) || Date.now() - entry.at >= CHECK_CACHE_TTL_MS) return null;
+  const age = Date.now() - entry.at;
+  if (!(age >= 0 && age < CHECK_CACHE_TTL_MS)) return null;
   return entry;
 }
 
 function writeCheckCache(storeDir, latest) {
   if (!storeDir) return;
   try {
+    mkdirSync(storeDir, { recursive: true });
     writeFileSync(join(storeDir, CHECK_CACHE_FILE), JSON.stringify({ latest, at: Date.now() }), "utf8");
   } catch {
     // a store this plugin cannot write to costs at most the fetch we already made, never the line
@@ -56,6 +58,7 @@ function writeCheckCache(storeDir, latest) {
 function writeFailureRecord(storeDir) {
   if (!storeDir) return;
   try {
+    mkdirSync(storeDir, { recursive: true });
     writeFileSync(join(storeDir, CHECK_CACHE_FILE), JSON.stringify({ failedAt: Date.now() }), "utf8");
   } catch {
     // an unwritable store costs at most a retry on the next call, never the line
@@ -75,7 +78,9 @@ function withinFailureBackoff(storeDir) {
   } catch {
     return false;
   }
-  return Number.isFinite(entry?.failedAt) && Date.now() - entry.failedAt < CHECK_BACKOFF_MS;
+  if (!Number.isFinite(entry?.failedAt)) return false;
+  const age = Date.now() - entry.failedAt;
+  return age >= 0 && age < CHECK_BACKOFF_MS;
 }
 
 function readJson(file) {
@@ -145,12 +150,14 @@ export function compareVersions(a, b) {
 
 /**
  * The line for a running version and the version at the moving pointer: behind
- * names the published newest, ahead says `local build`, and equal or unparsable
- * names the running version only.
+ * names the published newest, ahead says `local build`, and equal names the
+ * running version only. Null when either side cannot be parsed — a line saying
+ * `version X` there would claim "current" about something never compared.
  */
 function comparisonLine(own, latest) {
   const cmp = compareVersions(own, latest);
-  if (cmp === null || cmp === 0) return `version ${own}`;
+  if (cmp === null) return null;
+  if (cmp === 0) return `version ${own}`;
   return cmp < 0 ? `version ${own} · latest ${latest}` : `version ${own} · local build`;
 }
 
@@ -171,7 +178,7 @@ function withDeadline(promise) {
  * kept for 24 hours, and any failure — offline, abort, non-2xx, a body with no version in it —
  * is recorded as a failure and returns null, so the line is absent rather than a guess.
  */
-async function checkPublished(storeDir) {
+async function checkPublished(storeDir, debug) {
   let latest;
   let failure;
   try {
@@ -182,11 +189,11 @@ async function checkPublished(storeDir) {
     failure = err?.message ?? String(err);
   }
   if (typeof latest !== "string" || !latest) failure ??= "no version in the published manifest";
+  else if (parseVersion(latest) === null) failure ??= "the published version cannot be parsed";
   if (failure) {
     writeFailureRecord(storeDir);
-    if (process.env.MAGPIE_ACP_DEBUG === "1") {
-      // the same switch config.mjs reads: cfg never reaches this module, and the reason
-      // belongs on the host's stderr, never in a tool result the model would echo back
+    if (debug) {
+      // the reason belongs on the host's stderr, never in a tool result the model would echo back
       console.error("[magpie-acp-context] version check failed:", failure);
     }
     return null;
@@ -203,13 +210,13 @@ async function checkPublished(storeDir) {
  * the cache file, a failed check holds the next attempt off for 6 h, and the deadline keeps a
  * slow network from stalling the tool.
  */
-export async function versionLine(cwd = process.cwd(), storeDir) {
+export async function versionLine(cwd = process.cwd(), storeDir, debug = false) {
   const own = ownVersion(cwd);
   if (!own) return null;
   let latest = readCheckCache(storeDir)?.latest;
   if (!latest) {
     if (withinFailureBackoff(storeDir)) return null;
-    latest = await checkPublished(storeDir);
+    latest = await checkPublished(storeDir, debug);
     if (!latest) return null;
   }
   return comparisonLine(own, latest);

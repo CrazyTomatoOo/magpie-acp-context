@@ -157,8 +157,9 @@ In a session, ask the agent for `<short>_acp_status`: its first line names the s
 declared tools count as ours, and whether this caller passed the gate; the second line is a
 staleness hint — `version 0.2.2 · latest 0.2.3` when the installed copy is behind the
 `magpie-plugin` moving pointer, `version 0.2.2 · local build` when it is ahead of anything
-published, `version 0.2.2` when it is current or a version on either side cannot be compared,
-and nothing at all when the one unauthenticated check (3 s abort) could not answer.
+published, `version 0.2.2` when it is current, and nothing at all when the one unauthenticated
+check (3 s abort) could not answer — including a published version neither side can parse,
+since a line then would claim "current" about something never compared.
 `updateCheck: false` removes the line, the request, and the read of the cached answer — nothing
 leaves the machine. Then one line per session
 with refs, folds, the growth since the last fold against the 50,000-token nudge line, and the
@@ -175,9 +176,11 @@ Options can also come from the environment, which is handy for tests:
 `MAGPIE_ACP_UPDATE_CHECK` (`1`/`true` on, `0`/`false` off — wins over the option both ways).
 
 `MAGPIE_ACP_DEBUG=1` (or `debug: true`) prints, to the host's stderr, the fold decision of every
-request — the foldable window, folds created, skipped ranges, ranges dropped as foreign — and the
-stack of anything the hook swallowed. Use it when a compression the agent reported never showed up
-on the wire.
+request — the foldable window, folds created, skipped ranges, ranges dropped as foreign — the
+stack of anything the hook swallowed, and the reason a version check failed (a 404 at the pointer,
+a timeout, an unparsable published version), which is also the reason the version line is absent.
+Use it when a compression the agent reported never showed up on the wire, or when the staleness
+hint never appears.
 
 | option | default | meaning |
 |---|---|---|
@@ -193,7 +196,7 @@ on the wire.
 | `nudge.growthFloor` | `50000` | growth (unfolded tail) since the last fold that triggers a nudge — the flat 50K billion-context uses for every window |
 | `store.dir` | `~/.local/share/magpie-acp` | state + folded originals |
 | `store.maxBytes` / `store.ttlDays` | `536870912` / `30` | eviction budget, applied on `acp_status {evict:true}` |
-| `debug` | `false` | print each request's fold decision, and anything the hook swallowed, to the host's stderr (`MAGPIE_ACP_DEBUG=1`) |
+| `debug` | `false` | print each request's fold decision, anything the hook swallowed, and why a version check failed, to the host's stderr (`MAGPIE_ACP_DEBUG=1`) |
 | `updateCheck` | `true` | the staleness hint in `acp_status`: one unauthenticated GET a day. `false` removes the line, the request, and the cache read (`MAGPIE_ACP_UPDATE_CHECK=0`) |
 
 ## What lives on disk
