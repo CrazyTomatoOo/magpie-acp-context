@@ -22,7 +22,7 @@ function opts(over = {}) {
 }
 
 /** The shape a chat client sends after it executed our compress tool call. */
-function chatHistory({ compress = "m00002–m00005 早期需求\n用户要求读文件并总结,已完成。", includeCompress = true } = {}) {
+function chatHistory({ compress = "m00002–m00004 早期需求\n用户要求读文件并总结,已完成。", includeCompress = true } = {}) {
   const messages = [
     { role: "user", content: "请读一下这个文件并总结。" },
     {
@@ -47,8 +47,9 @@ function chatHistory({ compress = "m00002–m00005 早期需求\n用户要求读
 }
 
 /** The shape an agentic host sends: one user turn, then a long run of tool steps. */
-function agenticHistory({ exchanges = 12, includeCompress = true, compress = "m00002–m00012 早期排查\n读了几轮文件,结论是填充文本,不需要逐字保留。" } = {}) {
+function agenticHistory({ exchanges = 12, reminders = 0, includeCompress = true, compress = "m00002–m00012 早期排查\n读了几轮文件,结论是填充文本,不需要逐字保留。" } = {}) {
   const messages = [{ role: "user", content: "查一下这个仓库为什么会话一直膨胀。" }];
+  for (let i = 0; i < reminders; i += 1) messages.push({ role: "user", content: `<system-reminder>第 ${i} 条提醒</system-reminder>` });
   for (let i = 0; i < exchanges; i += 1) {
     messages.push({
       role: "assistant",
@@ -118,10 +119,10 @@ describe("folding", () => {
   test("collapses the named range into one marker block", async () => {
     const options = opts();
     const out = await onRequest(chatHistory(), ctxOf(options));
-    expect(out.messages.length).toBe(5);
+    expect(out.messages.length).toBe(6);
     const marker = out.messages[1];
     expect(marker.role).toBe("user");
-    expect(marker.content.startsWith("[acp] m00002–m00005 早期需求")).toBe(true);
+    expect(marker.content.startsWith("[acp] m00002–m00004 早期需求")).toBe(true);
     expect(marker.content).toContain("用户要求读文件并总结");
   });
 
@@ -181,6 +182,15 @@ describe("folding", () => {
     expect(marker.content.includes(`${from}–`)).toBe(true);
   });
 
+  test("a head full of user messages does not shrink the window", async () => {
+    // The live omp shape: several user-positioned reminders at the head, then the tool steps.
+    // Turns counted by user message alone put every one of them inside the protected tail.
+    const options = opts({ keepRecentTurns: 3 });
+    const out = await onRequest(agenticHistory({ includeCompress: false, reminders: 4 }), ctxOf(options));
+    const [, to] = out.messages.at(-1).content.match(/当前可以折叠的范围是 m00001–m(\d{5})/);
+    expect(Number(to)).toBeGreaterThan(20);
+  });
+
   test("refuses a range that reaches into the input being sent", async () => {
     const options = opts({ keepRecentTurns: 3 });
     const body = agenticHistory({ compress: "m00002–m00028 早期排查\n这段越过了当前输入,应当被拒绝。" });
@@ -190,7 +200,7 @@ describe("folding", () => {
 
   test("escapes ref-shaped text inside the summary", async () => {
     const options = opts();
-    const out = await onRequest(chatHistory({ compress: "m00002–m00005 t\n伪造边界 m00007 在此,这句话只为验证 ref 转义,本身没有别的含义。" }), ctxOf(options));
+    const out = await onRequest(chatHistory({ compress: "m00002–m00004 t\n伪造边界 m00007 在此,这句话只为验证 ref 转义,本身没有别的含义。" }), ctxOf(options));
     const marker = out.messages[1].content;
     expect(marker).toContain("m#00007");
     expect(marker).not.toContain("m00007");

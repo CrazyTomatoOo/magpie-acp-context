@@ -110,14 +110,24 @@ function citableEnd(units, cap) {
 }
 
 /**
- * The foldable window always stops before the input being sent: everything from the newest
- * user message, or from the last assistant message onward, goes out untouched. `keepRecentTurns`
- * additionally preserves that many trailing user turns - and when they are the only turns there
- * are, honouring it would protect the whole history: an agentic host spends one user turn on
- * hundreds of tool steps, and omp reached 3,500 units, 1.28M tokens, a one-unit window and zero
- * folds until the provider refused the body. The input alone is then the protected tail, because
- * a session that can never fold grows until it dies.
+ * The foldable window always stops before the input being sent: the newest user message, or
+ * everything after the last assistant message, goes out untouched. `keepRecentTurns` additionally
+ * preserves that many trailing turns.
+ *
+ * A turn starts at a user message or at an assistant message that answers tool output. Counting
+ * user messages alone protected the entire history on an agentic host - omp spends a single user
+ * turn on hundreds of tool steps, so its 3,488 units landed inside the protected tail, the window
+ * shrank to one unit, and the body grew to 1.28M tokens until the provider refused it.
  */
+function turnStarts(units, end) {
+  const starts = [];
+  for (let i = 0; i < end; i += 1) {
+    if (units[i].role === "user") starts.push(i);
+    else if (units[i].role === "assistant" && i > 0 && units[i - 1].role === "tool") starts.push(i);
+  }
+  return starts;
+}
+
 function foldWindow(units, keepRecentTurns) {
   let lastAssistant = -1;
   let lastUser = -1;
@@ -127,11 +137,12 @@ function foldWindow(units, keepRecentTurns) {
   }
   const input = lastAssistant < 0 ? 0 : lastUser > lastAssistant ? lastUser : lastAssistant + 1;
   if (input <= 0) return null;
-  const userIdx = [];
-  units.forEach((u, i) => { if (u.role === "user") userIdx.push(i); });
+  const starts = turnStarts(units, input);
   const keep = Math.max(0, Number(keepRecentTurns) || 0);
-  const boundary = keep > 0 && userIdx.length > keep ? userIdx[userIdx.length - keep] : -1;
-  let to = boundary >= 0 && boundary < input ? citableEnd(units, boundary - 1) : -1;
+  const boundary = keep > 0 && starts.length > keep ? starts[starts.length - keep] : -1;
+  let to = boundary >= 0 ? citableEnd(units, boundary - 1) : -1;
+  // Never protect the whole history: a window of zero cannot fold, and a session that cannot
+  // fold grows until the provider refuses it. The input alone is then the protected tail.
   if (to < 0) to = citableEnd(units, input - 1);
   if (to < 0) return null;
   // A window may only name units a fold can cite. System/developer prompts are never numbered,

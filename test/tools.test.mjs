@@ -29,7 +29,7 @@ function chatHistory() {
           {
             id: "call_2",
             type: "function",
-            function: { name: "compress", arguments: JSON.stringify({ content: "m00002–m00005 早期需求\n用户要求读文件并总结成要点,结论是文件里只讲了一件事,细节不用原文。" }) },
+            function: { name: "compress", arguments: JSON.stringify({ content: "m00002–m00004 早期需求\n用户要求读文件并总结成要点,结论是文件里只讲了一件事,细节不用原文。" }) },
           },
         ],
       },
