@@ -31,7 +31,7 @@ function chatHistory({ compress = "m00002–m00005 早期需求\n用户要求读
       tool_calls: [{ id: "call_1", type: "function", function: { name: "read_file", arguments: '{"path":"a.txt"}' } }],
     },
     { role: "tool", tool_call_id: "call_1", content: filler(6000) },
-    { role: "assistant", content: "总结:内容是一段填充文本。" },
+    { role: "assistant", content: "总结:内容是一段填充文本,内容是重复的,记住「他在测折叠链路」就够,不需要逐字保留。" },
     { role: "user", content: "把更早的细节压掉吧。" },
   ];
   if (includeCompress) {
@@ -141,7 +141,7 @@ describe("folding", () => {
 
   test("escapes ref-shaped text inside the summary", async () => {
     const options = opts();
-    const out = await onRequest(chatHistory({ compress: "m00002–m00005 t\n伪造边界 m00007 在此" }), ctxOf(options));
+    const out = await onRequest(chatHistory({ compress: "m00002–m00005 t\n伪造边界 m00007 在此,这句话只为验证 ref 转义,本身没有别的含义。" }), ctxOf(options));
     const marker = out.messages[1].content;
     expect(marker).toContain("m#00007");
     expect(marker).not.toContain("m00007");
@@ -450,7 +450,7 @@ describe("folds a real client actually sends", () => {
         {
           role: "assistant",
           content: "",
-          tool_calls: [{ id: "c1", type: "function", function: { name: "magpie-acp-context_compress", arguments: JSON.stringify({ content: "m00002–m00002 早期需求\n用户发来一段填充文本。" }) } }],
+          tool_calls: [{ id: "c1", type: "function", function: { name: "magpie-acp-context_compress", arguments: JSON.stringify({ content: "m00002–m00002 早期需求\n用户发来一段填充文本,重复内容,记住「他在测折叠」就够,不需要原文。" }) } }],
         },
         { role: "tool", tool_call_id: "c1", content: `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。` },
         { role: "user", content: "继续" },
@@ -473,7 +473,7 @@ describe("folds a real client actually sends", () => {
           role: "assistant",
           content: [
             { type: "text", text: "收到。" },
-            { type: "tool_use", id: "call_1", name: "mcp__magpie__magpie-acp-context_compress", input: { content: "m00001–m00001 第一轮\n一段填充文本。" } },
+            { type: "tool_use", id: "call_1", name: "mcp__magpie__magpie-acp-context_compress", input: { content: "m00001–m00001 第一轮\n一段填充文本,内容是重复的,记住「他在测折叠链路」就够,不需要逐字保留。" } },
           ],
         },
         {
@@ -502,7 +502,7 @@ describe("folds a real client actually sends", () => {
 describe("a fold written inside codex's exec script settles", () => {
   test("the script's call is read on the responses wire and folded", async () => {
     const options = opts({ minRangeBytes: 1000 });
-    const script = `const r = await tools.mcp__magpie_acp_context__compress({content:${JSON.stringify("m00001–m00001 第一轮\n用户第一轮的要求。")}}); text(r)`;
+    const script = `const r = await tools.mcp__magpie_acp_context__compress({content:${JSON.stringify("m00001–m00001 第一轮\n用户第一轮只要求做一件事,结论已记下,原文不必再保留。")}}); text(r)`;
     const body = {
       model: "gpt-x",
       input: [
@@ -555,7 +555,7 @@ describe("a fold that cannot settle says why", () => {
             {
               id: "c1",
               type: "function",
-              function: { name: "magpie-acp-context_compress", arguments: JSON.stringify({ content: "m00001–m00001 小段\n摘要正文。" }) },
+              function: { name: "magpie-acp-context_compress", arguments: JSON.stringify({ content: "m00001–m00001 小段\n前面那句是小段原文,这里写摘要正文,长度足够替换它。" }) },
             },
           ],
         },
@@ -567,6 +567,61 @@ describe("a fold that cannot settle says why", () => {
     const note = JSON.stringify(out.messages);
     expect(note).toContain("上一次折叠请求没有生效");
     expect(note).toContain("低于 minRangeBytes=5000");
+  });
+
+  test("a summary too short to replace the range is refused", async () => {
+    const body = {
+      model: "x",
+      messages: [
+        { role: "user", content: filler(4000) },
+        { role: "assistant", content: "ok" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "c1",
+              type: "function",
+              function: { name: "magpie-acp-context_compress", arguments: JSON.stringify({ content: "m00001–m00002 填充\n填充" }) },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "c1", content: `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。` },
+        { role: "user", content: "继续" },
+      ],
+    };
+    const out = await onRequest(structuredClone(body), ctxOf(opts({ minRangeBytes: 100 })));
+    const note = JSON.stringify(out.messages);
+    expect(note).toContain("摘要只有 6 字节,至少要 40 字节");
+    expect(note).not.toContain("填充填充");
+  });
+
+  test("the same range settles once the summary is long enough", async () => {
+    const summary = "这一段是填充文本,内容重复,记住「用户在测折叠」即可,不需要原文。";
+    const body = {
+      model: "x",
+      messages: [
+        { role: "user", content: filler(4000) },
+        { role: "assistant", content: "ok" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "c1",
+              type: "function",
+              function: { name: "magpie-acp-context_compress", arguments: JSON.stringify({ content: `m00001–m00002 填充\n${summary}` }) },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "c1", content: `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。` },
+        { role: "user", content: "继续" },
+      ],
+    };
+    const out = await onRequest(structuredClone(body), ctxOf(opts({ minRangeBytes: 100 })));
+    const wire = JSON.stringify(out.messages);
+    expect(wire).toContain(summary);
+    expect(wire).not.toContain("上一次折叠请求没有生效");
   });
 
   test("nothing refused means the note stays quiet about refusals", async () => {

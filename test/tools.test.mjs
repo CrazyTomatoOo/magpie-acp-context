@@ -29,7 +29,7 @@ function chatHistory() {
           {
             id: "call_2",
             type: "function",
-            function: { name: "compress", arguments: JSON.stringify({ content: "m00002–m00005 早期需求\n用户要求读文件并总结。" }) },
+            function: { name: "compress", arguments: JSON.stringify({ content: "m00002–m00005 早期需求\n用户要求读文件并总结成要点,结论是文件里只讲了一件事,细节不用原文。" }) },
           },
         ],
       },
@@ -47,7 +47,7 @@ const toolsFor = async (options) => {
 describe("tools", () => {
   test("compress parses every line of the payload", async () => {
     const tool = (await toolsFor({ store: { dir: store() }, maxSummaryChars: 20000 })).compress;
-    const out = await tool.execute({ content: "m00002–m00005 早期需求\n用户要求读文件。\n\nm00007–m00009 部署\n走 Docker。" });
+    const out = await tool.execute({ content: "m00002–m00005 早期需求\n用户要求读文件并给出结论,结论已经说完,原文不再需要逐字保留。\n\nm00007–m00009 部署\n走 Docker。" });
     expect(out).toContain("解析到 2 段");
     expect(out).toContain("m00002–m00005 「早期需求」");
     expect(out).toContain("m00007–m00009 「部署」");
@@ -55,14 +55,14 @@ describe("tools", () => {
 
   test("compress states the floor a range has to clear", async () => {
     const tool = (await toolsFor({ store: { dir: store() }, minRangeBytes: 5000 })).compress;
-    const out = await tool.execute({ content: "m00002–m00005 早期需求\n用户要求读文件。" });
+    const out = await tool.execute({ content: "m00002–m00005 早期需求\n用户要求读文件并给出结论,结论已经说完,原文不再需要逐字保留。" });
     expect(out).toContain("至少 5,000 字节");
     expect(out).toContain("约 2,000 tokens");
   });
 
   test("no floor configured means the reply stays quiet about one", async () => {
     const tool = (await toolsFor({ store: { dir: store() }, minRangeBytes: 0 })).compress;
-    const out = await tool.execute({ content: "m00002–m00005 早期需求\n用户要求读文件。" });
+    const out = await tool.execute({ content: "m00002–m00005 早期需求\n用户要求读文件并给出结论,结论已经说完,原文不再需要逐字保留。" });
     expect(out).not.toContain("一次折叠覆盖的原文至少");
   });
 

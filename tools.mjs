@@ -8,7 +8,7 @@
  * exactly where a fold can be settled, because the hook reads the transcript on the next turn.
  */
 import { loadConfig } from "./src/config.mjs";
-import { COMPRESS_ACK, parseCompressPayload } from "./src/compress.mjs";
+import { COMPRESS_ACK, MIN_SUMMARY_BYTES, parseCompressPayload } from "./src/compress.mjs";
 import { findBlock, listBlocks, searchBlocks } from "./src/blocks.mjs";
 import { cleanup } from "./src/store.mjs";
 import { renderStatus, scanStore } from "./src/maintenance.mjs";
@@ -64,8 +64,12 @@ function compressTool(cfg) {
       if (!ranges.length) return "没有解析到范围。每行写成 `m00002–m00005 主题`,空行后接摘要正文。";
       const lines = ranges.map((r) => {
         const bytes = budget(r.summary);
-        const ok = bytes <= cfg.maxSummaryChars;
-        return `${r.startId}–${r.endId} ${r.topic ? `「${r.topic}」` : ""}摘要 ${num(bytes)} 字节${ok ? "" : `(超过 maxSummaryChars=${num(cfg.maxSummaryChars)},会被截断)`}`;
+        const tooLong = bytes > cfg.maxSummaryChars;
+        const tooShort = bytes < MIN_SUMMARY_BYTES;
+        const note = tooShort
+          ? `(少于 ${MIN_SUMMARY_BYTES} 字节,这次折叠会被拒绝 - 被折掉的原文之后只剩摘要)`
+          : tooLong ? `(超过 maxSummaryChars=${num(cfg.maxSummaryChars)},会被截断)` : "";
+        return `${r.startId}–${r.endId} ${r.topic ? `「${r.topic}」` : ""}摘要 ${num(bytes)} 字节${note}`;
       });
       const floor = Number(cfg.minRangeBytes);
       return [

@@ -19,7 +19,7 @@
 import { loadConfig } from "./src/config.mjs";
 import { adapterFor, advertisedToolNames } from "./src/protocol.mjs";
 import { openSession } from "./src/store.mjs";
-import { canCallOwnTools, compressCalls } from "./src/compress.mjs";
+import { canCallOwnTools, compressCalls, MIN_SUMMARY_BYTES } from "./src/compress.mjs";
 import { blockIdOf, formatRef, neutralizeMarkers, sha256, utf8Bytes } from "./src/text.mjs";
 import { decideNudge, nudgeText, NUDGE_NONE } from "./src/nudge.mjs";
 import { estimateBodyTokens, readUsage } from "./src/usage.mjs";
@@ -44,6 +44,7 @@ export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], 
   if (Number(minRangeBytes) > 0) {
     parts.push(
       `一次折叠覆盖的原文至少 ${Number(minRangeBytes)} 字节(约 ${Math.round(Number(minRangeBytes) / 2.5)} tokens);不够的先留在历史里,攒够了再折。`,
+      `摘要至少 ${MIN_SUMMARY_BYTES} 字节:被折叠的原文之后只剩摘要,写短了等于把那段历史删掉。`,
     );
   }
   if (skipped.length) {
@@ -175,6 +176,14 @@ export function planFolds({ units, refs, session, cfg }) {
       const summary = String(entry.summary || "").slice(0, Number(cfg.maxSummaryChars));
       if (!summary.trim()) {
         rejected.push(`${label}:摘要为空`);
+        continue;
+      }
+      // The summary is the only thing left of the range afterwards, so a couple of characters
+      // is not a summary, it is a deletion with a receipt. A real client folded 45,542 bytes
+      // into the two-byte topic word "填充" before this floor existed.
+      const summaryBytes = utf8Bytes(summary);
+      if (summaryBytes < MIN_SUMMARY_BYTES) {
+        rejected.push(`${label}:摘要只有 ${summaryBytes} 字节,至少要 ${MIN_SUMMARY_BYTES} 字节;被折叠的原文之后只剩摘要`);
         continue;
       }
       const startBlock = units[safe.start].blockId;

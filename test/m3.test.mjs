@@ -31,7 +31,7 @@ function withCompressCall(body) {
       {
         id: "c1",
         type: "function",
-        function: { name: "compress", arguments: JSON.stringify({ content: "m00001–m00002 需求\n用户要一份压缩方案说明。" }) },
+        function: { name: "compress", arguments: JSON.stringify({ content: "m00001–m00002 需求\n用户要一份压缩方案说明,包含阈值、风险和回滚方式,细节不需要原文。" }) },
       },
     ],
   });
@@ -94,7 +94,7 @@ describe("client compaction", () => {
     const compacted = {
       model: "x",
       messages: [
-        { role: "user", content: "（客户端压缩)用户要一份压缩方案说明。" },
+        { role: "user", content: "（客户端压缩)用户要一份压缩方案说明,包含阈值、风险和回滚方式,细节不需要原文。" },
         { role: "user", content: "继续" },
       ],
     };

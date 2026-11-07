@@ -12,7 +12,7 @@ function units(name) {
       role: "assistant",
       text: "",
       stampable: false,
-      toolCalls: [{ name, input: { content: "m00001–m00001 读文件\n用户要求读 a.txt。" } }],
+      toolCalls: [{ name, input: { content: "m00001–m00001 读文件\n用户要求读 a.txt 并记住结论,结论已记下,原文不再需要逐字保留。" } }],
     },
     { index: 2, role: "tool", text: ACK, toolCalls: [], stampable: false },
   ];
@@ -86,7 +86,7 @@ describe("codex reaches MCP from inside its exec orchestrator", () => {
   ];
 
   test("a plain string literal is read out of the script", () => {
-    const calls = compressCalls(withCall(script(JSON.stringify("m00002–m00005 早期\n用户要求读 a.txt。"))));
+    const calls = compressCalls(withCall(script(JSON.stringify("m00002–m00005 早期\n用户要求读 a.txt 并记住结论,结论已记下,原文不再需要逐字保留。"))));
     expect(calls).toHaveLength(1);
     expect(calls[0].entries[0]).toMatchObject({ startId: "m00002", endId: "m00005" });
     expect(calls[0].acknowledged).toBe(true);

@@ -6,6 +6,11 @@
  * has to be accepted here — the client's tool result does not carry the summary.
  */
 
+// A fold keeps only its summary, so anything shorter than this is a deletion, not a
+// compression. Measured against the smallest range worth folding (5,000 bytes), it is still
+// a 100:1 cut - the floor is there to catch the empty gesture, not to shape good prose.
+export const MIN_SUMMARY_BYTES = 40;
+
 export const COMPRESS_ACK = "折叠会在下一次请求时按历史里真实的 ref 结算";
 
 export const COMPRESS_TOOL_NAMES = new Set([
