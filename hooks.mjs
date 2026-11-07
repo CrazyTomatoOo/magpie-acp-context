@@ -151,14 +151,36 @@ function ownToolBarrier(barriers, start, end) {
 }
 
 /**
+ * The one judgment an offer and an apply share: a unit a fold can be anchored on.
+ *
+ * Apply keeps a range only when both endpoints are `stampable`, and a range can only name a unit
+ * that carries a ref. An offer that starts on anything else advertises a range that can never
+ * settle: measured 2026-11-07, the note offered a start on a tool result, the model folded exactly
+ * that range, and apply answered `两端的消息不可折叠` - then offered the same start again (#16,
+ * bili #3236's advertise/apply split).
+ */
+function citable(unit) {
+  return Boolean(unit && unit.stampable && unit.ref);
+}
+
+/** The first index at or after `from` that a fold may BEGIN on, or `to + 1` when none does. */
+function citableStart(units, from, to) {
+  let s = Math.max(0, from);
+  while (s <= to && !citable(units[s])) s += 1;
+  return s;
+}
+
+/**
  * The offer must be a span that can actually settle: start after the newest own-tool record
  * inside it, so the note never advertises a range whose apply would refuse it (#9, the same
- * advertise/apply split bili fixed in #3236).
+ * advertise/apply split bili fixed in #3236). A record is a call and its reply, so `i + 1` is
+ * the reply - a tool result - and the start lands on the first citable unit after it (#16).
  */
-function trimAtOwnTools(window, barriers) {
+function trimAtOwnTools(units, window, barriers) {
   for (let i = window.to; i >= window.from; i -= 1) {
     if (!barriers.has(i)) continue;
-    return i + 1 <= window.to ? { from: i + 1, to: window.to } : null;
+    const from = citableStart(units, i + 1, window.to);
+    return from <= window.to ? { from, to: window.to } : null;
   }
   return window;
 }
@@ -166,7 +188,7 @@ function trimAtOwnTools(window, barriers) {
 /** The newest unit a range can END at without dragging its tool result past `cap`. */
 function citableEnd(units, cap) {
   for (let e = cap; e >= 0; e -= 1) {
-    if (!units[e].stampable) continue;
+    if (!citable(units[e])) continue;
     let x = e;
     while (x + 1 < units.length && (units[x].toolCalls || []).length > 0) x += 1;
     if (x <= cap) return e;
@@ -212,9 +234,9 @@ function foldWindow(units, keepRecentTurns) {
   if (to < 0) return null;
   // A window may only name units a fold can cite. System/developer prompts are never numbered,
   // so a window that starts at index 0 hands the model `undefined` as its first ref - a range it
-  // cannot possibly call compress with. Start at the first unit that actually carries a ref.
-  let from = 0;
-  while (from <= to && !units[from].ref) from += 1;
+  // cannot possibly call compress with. Tool calls and results carry a ref but are endpoints
+  // apply refuses, so the start is the first unit that passes the same judgment apply uses.
+  const from = citableStart(units, 0, to);
   if (from > to) return null;
   return { from, to };
 }
@@ -229,7 +251,7 @@ export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
   // Our own tool traffic is a barrier, not just a refusal: a range may not reach across it (#9).
   const barriers = new Set();
   for (let i = 0; i < units.length; i += 1) if (ownToolUnit(units[i])) barriers.add(i);
-  const window = window0 ? trimAtOwnTools(window0, barriers) : null;
+  const window = window0 ? trimAtOwnTools(units, window0, barriers) : null;
   const created = [];
   const unresolved = [];
   const foreign = [];
@@ -279,10 +301,12 @@ export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
   // A window whose whole span sits under the fold floor is not an offer, it is a trap: measured
   // 2026-11-07 on the claude lane, the note advertised a 3,410-byte single-unit window, the model
   // folded exactly that and got a size refusal, widened the range, and hit the window refusal —
-  // two calls spent on a range nothing could ever settle.
+  // two calls spent on a range nothing could ever settle. The floor and the span both start at
+  // the first citable unit: skipping a settled fold can land on the tool result that answered a
+  // call inside it, and that unit is no more foldable than the record it follows (#16).
   const foldable = window
     ? (() => {
-        const from = firstUncoveredFrom(window.from, window.to);
+        const from = citableStart(units, firstUncoveredFrom(window.from, window.to), window.to);
         if (from > window.to) return null;
         const spanBytes = units.slice(from, window.to + 1).reduce((n, u) => n + utf8Bytes(u.text), 0);
         if (spanBytes < Number(cfg.minRangeBytes)) return null;
@@ -320,7 +344,7 @@ export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
         rejected.push(`${label}:起点在终点之后`);
         continue;
       }
-      if (!units[startIndex].stampable || !units[endIndex].stampable) {
+      if (!citable(units[startIndex]) || !citable(units[endIndex])) {
         rejected.push(`${label}:两端的消息不可折叠(工具调用或工具结果)`);
         continue;
       }
