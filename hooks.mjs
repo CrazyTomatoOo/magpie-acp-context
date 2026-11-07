@@ -474,7 +474,8 @@ export async function onResponse(reply, ctx) {
       });
       if (cfg.debug) {
         console.error("[magpie-acp-context] refused:", refusal.text || "(no reason in the body)");
-        console.error("[magpie-acp-context] refusal ctx", JSON.stringify(Object.keys(ctx || {})), "reply", String(typeof reply), JSON.stringify(reply ?? null).slice(0, 200));
+        const safe = (v) => { try { return JSON.stringify(v ?? null)?.slice(0, 300) ?? "undefined"; } catch { return "<unserializable>"; } };
+        for (const k of Object.keys(ctx || {})) console.error("[magpie-acp-context] ctx", k, safe(ctx[k]));
       }
       return;
     }
