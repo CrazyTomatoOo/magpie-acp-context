@@ -21,12 +21,14 @@ export const COMPRESS_TOOL_NAMES = new Set([
 const OWN_PREFIX = "magpie-acp-context";
 
 /**
- * Some wires flatten a name before it reaches the transcript (`_mcp__magpie_acp_context_compress`:
- * leading underscore, dots and dashes folded to underscores), so the separators that identify a
- * name are not the ones the client was given. Compare on a canonical form, keeping the rule that
- * the plugin's own prefix must appear - another server's `foo_compress` is not our call.
+ * Every wire spells the served name its own way: Claude Code keeps the MCP wrapper and doubles the
+ * underscore (`mcp__magpie-acp-context__compress`), Codex keeps a slash
+ * (`magpie-acp-context/compress`), omp flattens the whole thing
+ * (`_mcp__magpie_acp_context_compress`). Fold every run of non-alphanumerics to one underscore, so
+ * the separators that identify the name stop depending on which client is talking, while the rule
+ * that the plugin's own prefix must appear still keeps another server's `foo_compress` out.
  */
-const canonical = (name) => name.replace(/[-.\s]+/g, "_").replace(/^_+/, "");
+const canonical = (name) => String(name).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 
 export function isCompressToolName(name) {
   const raw = String(name ?? "").toLowerCase().trim();
@@ -90,7 +92,7 @@ export function canCallOwnTools(names) {
     if (!full) return false;
     if (isOwnToolName(full)) return true;
     if (EXEC_SURFACES.has(full)) return true;
-    return EXEC_SURFACES.has(full.replace(/^(mcp__)?[a-z0-9]+_+/, ""));
+    return EXEC_SURFACES.has(full.replace(/^mcp_/, "").replace(/^[a-z0-9]+_+/, ""));
   });
 }
 

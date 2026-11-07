@@ -35,6 +35,21 @@ describe("compress tool names a real client replays", () => {
     expect(isCompressToolName("_mcp__other_acp_context_compress")).toBe(false);
   });
 
+  test("the spellings claude and codex replay on the wire", () => {
+    // Measured 2026-11-07 through a real gateway: Claude Code keeps the MCP wrapper and doubles
+    // the separator (mcp__<server>__<tool>), Codex namespaces with a slash (<server>/<tool>).
+    // Neither settled a fold while the canonical form only folded dashes, dots and spaces.
+    expect(isCompressToolName("mcp__magpie-acp-context__compress")).toBe(true);
+    expect(isCompressToolName("magpie-acp-context/compress")).toBe(true);
+    expect(isCompressToolName("magpie-acp-context/acp_status")).toBe(false);
+    expect(isCompressToolName("mcp__magpie__compress")).toBe(false);
+  });
+
+  test("a call under either spelling settles", () => {
+    expect(compressCalls(units("mcp__magpie-acp-context__compress"))).toHaveLength(1);
+    expect(compressCalls(units("magpie-acp-context/compress"))).toHaveLength(1);
+  });
+
   test("neighbouring tools and lookalikes are not a compress call", () => {
     expect(isCompressToolName("mcp__magpie__magpie-acp-context_decompress")).toBe(false);
     expect(isCompressToolName("magpie-acp-context_search_context")).toBe(false);
