@@ -506,6 +506,13 @@ describe("the range the note advertises", () => {
     ).toHaveLength(1);
   });
 
+  test("a window under the fold floor is not advertised at all", async () => {
+    const options = opts({ minRangeBytes: 100000 });
+    const out = await onRequest(chatHistory({ includeCompress: false }), ctxOf(options));
+    const note = String(out.messages.at(-1).content);
+    expect(note).not.toContain("当前可以折叠的范围是");
+  });
+
   test("a range that starts inside a settled fold is refused, not nested", async () => {
     const options = opts();
     const body = chatHistory({ compress: wholeWindow });

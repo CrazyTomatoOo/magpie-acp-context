@@ -223,10 +223,17 @@ export function planFolds({ units, refs, session, cfg }) {
     }
     return to + 1;
   };
+  // A window whose whole span sits under the fold floor is not an offer, it is a trap: measured
+  // 2026-11-07 on the claude lane, the note advertised a 3,410-byte single-unit window, the model
+  // folded exactly that and got a size refusal, widened the range, and hit the window refusal —
+  // two calls spent on a range nothing could ever settle.
   const foldable = window
     ? (() => {
         const from = firstUncoveredFrom(window.from, window.to);
-        return from <= window.to ? { from, to: window.to } : null;
+        if (from > window.to) return null;
+        const spanBytes = units.slice(from, window.to + 1).reduce((n, u) => n + utf8Bytes(u.text), 0);
+        if (spanBytes < Number(cfg.minRangeBytes)) return null;
+        return { from, to: window.to };
       })()
     : null;
   for (const call of compressCalls(units)) {
