@@ -472,7 +472,10 @@ export async function onResponse(reply, ctx) {
         });
         session.save();
       });
-      if (cfg.debug) console.error("[magpie-acp-context] refused:", refusal.text || "(no reason in the body)");
+      if (cfg.debug) {
+        console.error("[magpie-acp-context] refused:", refusal.text || "(no reason in the body)");
+        console.error("[magpie-acp-context] refusal ctx", JSON.stringify(Object.keys(ctx || {})), "reply", String(typeof reply), JSON.stringify(reply ?? null).slice(0, 200));
+      }
       return;
     }
     session.withLock(() => {
