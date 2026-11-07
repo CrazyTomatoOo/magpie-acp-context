@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { blocksDir } from "./blocks.mjs";
 import { cleanup } from "./store.mjs";
 import { scanSkips } from "./skips.mjs";
+import { utf8Bytes } from "./text.mjs";
 
 const MAX_SCAN = 50_000;
 
@@ -89,7 +90,7 @@ export function scanStore(storeDir) {
         endRef: f.endRef,
         topic: f.topic ?? "",
         bytes: f.bytes ?? 0,
-        summaryBytes: f.summaryBytes ?? null,
+        summaryBytes: f.summaryBytes ?? utf8Bytes(f.summary ?? ""),
         summary: typeof f.summary === "string" ? f.summary : "",
         blocks: Array.isArray(f.blocks) ? f.blocks : [],
         at: f.at ?? null,
