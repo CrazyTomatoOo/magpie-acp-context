@@ -119,6 +119,10 @@ function markerHead(fold) {
 /** A folded block as it sits in the history: stamped, then the marker head and its summary. */
 const MARKER_HEAD = /^\[acp\] m\d{5,}–m\d{5,}/;
 
+/** A unit that is (or begins with) a fold marker, stamped or not. */
+const isSummaryUnit = (unit) =>
+  Boolean(unit?.stampable) && MARKER_HEAD.test(String(unit.text ?? "").replace(/^\[m\d{5,}\] /, ""));
+
 /**
  * How much of a span is already a summary of its own (#14).
  *
@@ -134,9 +138,15 @@ function condensedShare(units, from, to) {
     const unit = units[i];
     if (!unit?.stampable) continue;
     material += 1;
-    if (MARKER_HEAD.test(unit.text.replace(/^\[m\d{5,}\] /, ""))) folded += 1;
+    if (isSummaryUnit(unit)) folded += 1;
   }
   return material > 0 ? folded / material : 0;
+}
+
+/** The first unit of the span that is already a summary, or -1. A refusal has to name one ref. */
+function firstSummaryAt(units, from, to) {
+  for (let i = Math.max(0, from); i <= to && i < units.length; i += 1) if (isSummaryUnit(units[i])) return i;
+  return -1;
 }
 
 const isCondensed = (units, from, to) => condensedShare(units, from, to) >= CONDENSED_SHARE;
@@ -593,9 +603,15 @@ export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
       const condensed = isCondensed(units, safe.start, safe.end);
       const floorSummary = condensed ? CONDENSED_SUMMARY_BYTES : MIN_SUMMARY_BYTES;
       if (summaryBytes < floorSummary) {
+        // A refusal names a ref and says what to do instead (coding standard). Here the unit that
+        // raised the floor is the first summary in the span, and the way out is either a summary
+        // that carries the thread or a range that starts after that marker.
+        const share = Math.round(condensedShare(units, safe.start, safe.end) * 100);
+        const summaryAt = firstSummaryAt(units, safe.start, safe.end);
+        const earliest = summaryAt >= 0 ? refs[units[summaryAt].blockId] : refs[units[safe.start].blockId];
         rejected.push(
           condensed
-            ? `${label}:摘要只有 ${summaryBytes} 字节,至少要 ${floorSummary} 字节——这段里 ${Math.round(condensedShare(units, safe.start, safe.end) * 100)}% 已经是你写的摘要,再折一次要写跨段的主线(哪些事连在一起、为什么)和一份主题清单`
+            ? `${label}:摘要只有 ${summaryBytes} 字节,至少要 ${floorSummary} 字节——这段里 ${share}% 已经是你写的摘要(最早一条是 ${earliest}),再折一次要写跨段的主线(哪些事连在一起、为什么)和一份主题清单;不想写跨段,就把范围收在 ${earliest} 之后`
             : `${label}:摘要只有 ${summaryBytes} 字节,至少要 ${floorSummary} 字节;被折叠的原文之后只剩摘要`,
         );
         continue;

@@ -51,6 +51,15 @@ describe("a range that is already mostly summaries", () => {
     expect(reason).toContain("75%");
   });
 
+  test("the refusal names the earliest summary and where the range may start instead", () => {
+    const out = plan(history({ units: condensedUnits(), summary: pad(MIN_SUMMARY_BYTES + 2), range: "m00001–m00004" }));
+    const reason = out.rejected.join(";");
+    // units[1] is the first marker, so the ledger numbers it m00002: a reader told only "80 字节"
+    // cannot find the unit that raised the floor, and a range cannot shrink without a ref.
+    expect(reason).toContain("最早一条是 m00002");
+    expect(reason).toContain("就把范围收在 m00002 之后");
+  });
+
   test("settles a summary that meets the doubled floor", () => {
     const body = pad(CONDENSED_SUMMARY_BYTES + 20);
     const out = plan(history({ units: condensedUnits(), summary: body, range: "m00001–m00004" }));
