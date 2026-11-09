@@ -253,4 +253,56 @@ sed 's/^/[e2e] /' "$OUT/gates.log"
 grep -q 'OK - one fold, three refusals, all four in acp_status' "$OUT/gates.log" || { say "FAIL the four-gate live proof"; exit 1; }
 say "four gates fired live"
 
+# The elision leg (#19): a request over a KNOWN limit that nobody folded has its earliest whole
+# turns swapped for a mechanical statement — and every ref the statement names comes back through
+# `decompress`. The limit is an env value, so the gateway is restarted to pick it up.
+say "restarting with a known window"
+pkill -f 'magpie web --gateway' || true
+i=0
+while probe "http://127.0.0.1:$GW_PORT/"; do
+  i=$((i + 1)); [ "$i" -gt 80 ] && { say "FAIL gateway did not stop"; exit 1; }
+  sleep 0.25
+done
+MAGPIE_ACP_FALLBACK=full MAGPIE_ACP_CONTEXT_LIMIT=4000 magpie web --gateway --no-open >>"$OUT/gateway.log" 2>&1 &
+i=0
+until probe "http://127.0.0.1:$GW_PORT/"; do
+  i=$((i + 1)); [ "$i" -gt 240 ] && { say "FAIL gateway did not come back with the window"; exit 1; }
+  sleep 0.25
+done
+"$BUN" /work/request.mjs --over >/tmp/req.json
+mkdir -p "$OUT/elide"
+ACS_SESSION=elide-check "$BUN" /work/post.mjs "http://127.0.0.1:$GW_PORT/v1/chat/completions" "$OUT/elide" >/dev/null 2>&1 || true
+cp "$(latest_body)" "$OUT/elide-body.json"
+if grep -qE '\[acp\] 已省略 m[0-9]+–m[0-9]+ 共 [0-9]+ 条\(机械省略,没有摘要' "$OUT/elide-body.json"; then
+  say "  ok   the earliest turns were replaced by a mechanical statement"
+else
+  say "  FAIL the earliest turns went out whole"
+  fail=1
+fi
+if grep -q '早期需求-1:uuuu' "$OUT/elide-body.json"; then
+  say "  FAIL the earliest turn was still on the wire"
+  fail=1
+else
+  say "  ok   the earliest turn left the wire"
+fi
+ELIDEFROM=$(sed -n 's/.*已省略 \(m[0-9]*\)–m[0-9]* 共 .*/\1/p' "$OUT/elide-body.json" | sed -n 1p)
+ELIDETO=$(sed -n 's/.*已省略 m[0-9]*–\(m[0-9]*\) 共 .*/\1/p' "$OUT/elide-body.json" | sed -n 1p)
+if [ -n "$ELIDEFROM" ] && [ "$ELIDEFROM" != "$ELIDETO" ]; then
+  say "  ok   the statement names a range in history order ($ELIDEFROM–$ELIDETO)"
+else
+  say "  FAIL the statement named no range in history order ($ELIDEFROM–$ELIDETO)"
+  fail=1
+fi
+mkdir -p "$OUT/elide-back"
+OUT="$OUT/elide-back" "$BUN" /work/mcp.mjs "http://127.0.0.1:$GW_PORT" \
+  magpie-acp-context_decompress "{\"id\":\"$ELIDEFROM\"}" >/dev/null 2>&1 || true
+if grep -q '早期需求-1:uuuu' "$OUT/elide-back/mcp.json"; then
+  say "  ok   the elided original came back through decompress ($ELIDEFROM)"
+else
+  say "  FAIL decompress could not restore the elided original ($ELIDEFROM)"
+  fail=1
+fi
+[ "$fail" -eq 0 ] || { say "FAIL elision assertions"; exit 1; }
+say "elision fired on a known window"
+
 say "OK"

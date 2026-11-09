@@ -27,6 +27,7 @@
         "unitTokens": 32000,
         "keepChars": 2000
       },
+      "contextLimit": 0,
       "store": {
         "dir": "~/.local/share/magpie-acp",
         "maxBytes": 536870912,

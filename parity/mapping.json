@@ -15,7 +15,7 @@
   "config.preserveRecentMessages": { "option": "keepRecentTurns", "note": "上游按条计，我们按轮计" },
   "config.tiers.*": { "note": "分级蒸馏要代理侧改写历史，插件结构上做不到" },
   "config.promotionThreshold": { "note": "同上（分级蒸馏的一部分）" },
-  "config.truncate.*": { "note": "我们只提示不截断" },
+  "config.truncate.*": { "option": "fallback", "note": "full + 已知上限时丢最老的整轮，到 75% 为止；上限只认上游报的数 / contextLimit / 观察到的峰值，没有数就不动" },
   "config.ccr.minToolTokens": { "note": "原文一律落盘，没有阈值" },
   "marker": { "note": "📦 [ACP] 是上游自己的响应流标记，我们不产生" },
   "prompts.*": { "note": "提示词是我们自己写的，不复用上游文本" },

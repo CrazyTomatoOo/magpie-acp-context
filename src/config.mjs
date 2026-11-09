@@ -37,6 +37,11 @@ export const DEFAULTS = {
   // to know it has to go.
   fallback: "cap", // cap | full | off
   cap: { unitTokens: 32000, keepChars: 2000 },
+  // contextLimit: the window, when the owner knows it. Zero means "nobody told me", and the
+  // elision leg (#19) then only runs on evidence: a ceiling a refusal named, or the biggest
+  // prompt the provider has actually billed. A guessed window is the one input that makes a
+  // hook cut requests that were fine, so there is no default here.
+  contextLimit: 0,
   store: { dir: "~/.local/share/magpie-acp", maxBytes: 536870912, ttlDays: 30 },
   gatewayTimeoutMs: 3000,
   failOpen: true,
@@ -77,6 +82,7 @@ export function loadConfig(options = {}) {
   if (process.env.MAGPIE_ACP_FALLBACK) cfg.fallback = process.env.MAGPIE_ACP_FALLBACK;
   if (process.env.MAGPIE_ACP_UNIT_CAP) cfg.cap = { ...cfg.cap, unitTokens: Number(process.env.MAGPIE_ACP_UNIT_CAP) };
   if (process.env.MAGPIE_ACP_CLIP_KEEP) cfg.cap = { ...cfg.cap, keepChars: Number(process.env.MAGPIE_ACP_CLIP_KEEP) };
+  if (process.env.MAGPIE_ACP_CONTEXT_LIMIT) cfg.contextLimit = Number(process.env.MAGPIE_ACP_CONTEXT_LIMIT);
   if (process.env.MAGPIE_ACP_AGENTS !== undefined) {
     cfg.agents = String(process.env.MAGPIE_ACP_AGENTS)
       .split(",")

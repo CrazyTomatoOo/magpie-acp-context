@@ -85,7 +85,7 @@ export function sessionReport(session, { growthFloor = 50000, turnLimit = 5, fol
   lines.push(
     [
       `· ${session.key}`,
-      `refs=${num(session.refs)} folds=${num(session.folds)} clips=${num((session.clips ?? []).length)} evicted=${num(session.evictedFolds)}`,
+      `refs=${num(session.refs)} folds=${num(session.folds)} clips=${num((session.clips ?? []).length)} elides=${num((session.elisions ?? []).length)} evicted=${num(session.evictedFolds)}`,
       `本轮≈${num(request?.tokens ?? 0)} tok,计费 prompt=${num(session.lastUsage?.input ?? 0)} tok`,
       `收到 usage ${num(session.usage)} 次`,
       `nudge=${session.nudge ? `${session.nudge.kind}@${num(session.nudge.tokens ?? 0)} tok` : "无"}`,
@@ -153,6 +153,23 @@ export function sessionReport(session, { growthFloor = 50000, turnLimit = 5, fol
   if (clipRefused.length) {
     const lastRefusal = clipRefused[clipRefused.length - 1];
     lines.push(`  上一轮有 ${num(clipRefused.length)} 条超限没裁成:${lastRefusal?.reason ?? "?"}`);
+  }
+  // The elision is the pass nobody asked for, so it must never look like a fold: no summary, a
+  // count of turns, and the span it dropped - which is exactly what `decompress` needs to undo it.
+  const elideList = Array.isArray(session.elisions) ? session.elisions : [];
+  if (elideList.length) {
+    const latest = elideList[elideList.length - 1];
+    const saved = elideList.reduce((n, e) => n + (Number(e.bytes) || 0), 0);
+    lines.push(
+      `  省略:${num(elideList.length)} 次,原文省下 ${num(saved)} 字节 · 最近 ${latest?.startRef ?? "?"}–${latest?.endRef ?? "?"}` +
+        ` 共 ${num(latest?.count ?? 0)} 条 / ${num(latest?.turns ?? 0)} 轮(${stamp(latest?.at ?? null, now)})`,
+    );
+  }
+  if (request?.limit) {
+    const band = request.overLimit ? "超过" : "未超过";
+    const streak = Number(request.elideStreak ?? 0);
+    lines.push(`  窗口:${num(request.limit)} tok,本轮≈${num(request.tokens ?? 0)} tok ${band} 95% 线${streak ? `;连续第 ${num(streak)} 轮` : ""}`);
+    if (request.newSession) lines.push("  本轮已经说过:该开一个新会话了(这一句每段一次,不会每轮重复)。");
   }
   if (request?.unrecognized?.length) lines.push(`  认不出的 compress 形状:${request.unrecognized.join(";")}`);
   if (request?.unresolved?.length) lines.push(`  引用了本插件没发过的 ref:${request.unresolved.join("、")}`);

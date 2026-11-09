@@ -63,6 +63,23 @@ goes to disk first: if the store cannot be written the unit is sent whole, becau
 way back is worse than a large request. `fallback: "off"` turns this off; it is on by default
 because it is the only boundary here that does not depend on the model cooperating.
 
+With `fallback: "full"` and a known ceiling, there is a second leg: once the request reaches 95%
+of the ceiling the hook drops the oldest whole turns (and, at the same time, lowers the per-unit
+cut to 2,000 tokens) until the request is back under 75%. The turns are replaced by one mechanical
+statement, never a summary:
+
+```
+[acp] 已省略 m00001–m00010 共 20 条(机械省略,没有摘要;每条原文都存着,可用 decompress 按 ref 取回)
+```
+
+Every original goes to the store first, so `decompress m00007` still answers. The ceiling is taken
+from a refusal the provider already sent (`N tokens`), else from `contextLimit`, else from the
+highest `usage.input` seen — when none of the three exists the leg never fires, because a guessed
+window is the one thing that makes a hook cut a request that was fine. The same history produces
+the same bytes on the next turn (the latch lives in the session ledger and clears on a real fold),
+and three consecutive passes that still leave the request over the line add one sentence asking
+for a new session — once per stretch, not once per turn.
+
 ### Refusals on the wire
 
 Every gate that refuses a range says so twice: in the note appended to the turn (first three,
@@ -258,12 +275,14 @@ small to be worth folding, with the reason recorded. It is advice, and advice is
 a model that never folds is why the fallback exists: past 32,000 tokens in a single message, the
 hook cuts that message itself, keeps the original on disk, and names its id where the text was.
 The cut never depends on knowing the window, because the message that blows a request is usually
-in the turn being sent.
+in the turn being sent. The second leg needs the number: with `fallback: "full"` and a ceiling
+(provider refusal, `contextLimit`, or the highest `usage.input` seen), whole turns leave once the
+request sits at 95% of it, leaving a statement that says what was dropped and how to get it back.
 
 Options can also come from the environment, which is handy for tests:
 `MAGPIE_ACP_ENABLED=1`, `MAGPIE_ACP_MODE`, `MAGPIE_ACP_STORE`, `MAGPIE_ACP_INJECT_STYLE`,
 `MAGPIE_ACP_KEEP_TURNS`, `MAGPIE_ACP_MIN_BYTES`, `MAGPIE_ACP_GROWTH_FLOOR`, `MAGPIE_ACP_AGENTS`,
-`MAGPIE_ACP_FALLBACK`, `MAGPIE_ACP_UNIT_CAP`, `MAGPIE_ACP_CLIP_KEEP`,
+`MAGPIE_ACP_FALLBACK`, `MAGPIE_ACP_UNIT_CAP`, `MAGPIE_ACP_CLIP_KEEP`, `MAGPIE_ACP_CONTEXT_LIMIT`,
 `MAGPIE_ACP_UPDATE_CHECK` (`1`/`true` on, `0`/`false` off — wins over the option both ways).
 
 `MAGPIE_ACP_DEBUG=1` (or `debug: true`) prints, to the host's stderr, the fold decision of every
@@ -285,9 +304,10 @@ hint never appears.
 | `maxSummaryChars` | `20000` | summaries are truncated, never rejected |
 | `keepRecentTurns` | `3` | trailing turns kept verbatim; a turn starts at a user message or at an assistant message that answers tool output, so an agentic host's tool steps count. When that protection would cover the whole history it degrades to the input being sent, because a window of zero never folds |
 | `nudge.growthFloor` | `50000` | growth (unfolded tail) since the last fold that triggers a nudge |
-| `fallback` | `cap` | what the hook does when nobody folds: `cap` cuts an oversized unit, `full` also drops whole turns once the window is known (`#19`, until then equals `cap`), `off` sends the request untouched |
-| `cap.unitTokens` | `32000` | a single unit larger than this is cut to head + marker + tail, whether or not any window is known — a 6 MB tool result in the current turn cannot be helped by dropping history |
+| `fallback` | `cap` | what the hook does when nobody folds: `cap` cuts an oversized unit, `full` also drops whole turns once the ceiling is known, `off` sends the request untouched |
+| `cap.unitTokens` | `32000` | a single unit larger than this is cut to head + marker + tail, whether or not any window is known — a 6 MB tool result in the current turn cannot be helped by dropping history; under `full` and past 95% of the ceiling the cut drops to `2000` |
 | `cap.keepChars` | `2000` | characters kept at each end; the marker names the block id, so `decompress <id>` returns the original |
+| `contextLimit` | `0` | the window you declare; `0` means nobody told the hook, so the whole-turn half of `full` never fires. A ceiling the provider already reported, and the highest `usage.input` seen, are tried before this |
 | `store.dir` | `~/.local/share/magpie-acp` | state + folded originals |
 | `store.maxBytes` / `store.ttlDays` | `536870912` / `30` | eviction budget, applied on `acp_status {evict:true}` |
 | `debug` | `false` | print each request's fold decision, anything the hook swallowed, and why a version check failed, to the host's stderr (`MAGPIE_ACP_DEBUG=1`) |
@@ -366,6 +386,20 @@ facts and the measured run.
 
 Newest first. `git tag -l 'v*'` lists the earlier releases; `magpie-plugin` always points at the
 newest of them.
+
+**Unreleased** — the second leg of the fallback, which needs a number the hook can trust:
+
+- with `fallback: "full"` and a known ceiling (a `N tokens` refusal, else `contextLimit`, else the
+  highest `usage.input` seen), a request at 95% of it drops its oldest whole turns until it is back
+  under 75%, replaced by one mechanical statement that names the span and says how to get it back —
+  never a summary, and never a fold marker;
+- the same stretch of history produces the same bytes on the next turn: the decision is latched in
+  the session ledger by the refs it dropped, and a real fold clears the latch;
+- three passes in a row that still leave the request over the line add one sentence asking for a
+  new session — once per stretch;
+- media, the plugin's own records and existing `[acp]` statements end the sweep instead of being
+  crossed, and an original that cannot reach the store is not dropped;
+- the per-unit cut drops to 2,000 tokens while the request is over the line.
 
 **0.4.0** — the safety boundary closes, and none of it depends on the model cooperating:
 

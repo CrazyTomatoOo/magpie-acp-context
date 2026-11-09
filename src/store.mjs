@@ -72,6 +72,8 @@ export function openSession(storeDir, key) {
   if (!Array.isArray(state.folds)) state.folds = [];
   if (!Array.isArray(state.clips)) state.clips = [];
   if (!Array.isArray(state.clipRefusals)) state.clipRefusals = [];
+  if (!Array.isArray(state.elisions)) state.elisions = [];
+  if (!state.elide) state.elide = null;
   if (!Array.isArray(state.turns)) state.turns = [];
   const before = existed ? JSON.stringify(state) : null;
   let dirty = false;
@@ -158,6 +160,55 @@ export function openSession(storeDir, key) {
     },
     lastUsage() {
       return state.usage[state.usage.length - 1] ?? null;
+    },
+    /**
+     * The biggest prompt the provider has billed. It is the last-resort answer to "how big is
+     * this window": a request that came back with usage proves the window held at least that
+     * much, and no cheaper evidence exists for a session nobody configured.
+     */
+    peakInput() {
+      let peak = 0;
+      for (const sample of state.usage) peak = Math.max(peak, Number(sample?.input) || 0);
+      return peak;
+    },
+    elisions() {
+      return state.elisions;
+    },
+    /**
+     * One record per pass, keyed by its span: the same history elided twice is the same elision,
+     * and a ring that grew on retries would read as "the hook keeps cutting", which is the one
+     * thing a reader must be able to tell apart.
+     */
+    recordElisions(list) {
+      const known = new Set(state.elisions.map((e) => e.id));
+      let added = 0;
+      for (const elision of list) {
+        if (!elision?.id || known.has(elision.id)) continue;
+        state.elisions.push(elision);
+        known.add(elision.id);
+        added += 1;
+        dirty = true;
+      }
+      if (state.elisions.length > MAX_CLIPS) state.elisions.splice(0, state.elisions.length - MAX_CLIPS);
+      return added;
+    },
+    elide() {
+      return state.elide ?? null;
+    },
+    /**
+     * The latch: how many passes in a row left the request over the limit, and whether the one
+     * new-session line has already been said. It is stored rather than derived because the
+     * request that says it and the request that repeats it are different requests.
+     */
+    setElide(elide) {
+      state.elide = elide;
+      dirty = true;
+    },
+    clearElide() {
+      if (!state.elide) return false;
+      state.elide = null;
+      dirty = true;
+      return true;
     },
     /**
      * The provider refusing the request is the one signal no size estimate can supply: a

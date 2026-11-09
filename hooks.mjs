@@ -24,7 +24,7 @@ import { openSession } from "./src/store.mjs";
 import { canCallOwnTools, compressCalls, deviceTarget, MIN_SUMMARY_BYTES, ownToolUnit, unknownShapes } from "./src/compress.mjs";
 import { blockIdOf, formatRef, neutralizeMarkers, sha256, utf8Bytes } from "./src/text.mjs";
 import { decideNudge, nudgeText, NUDGE_BELOW_FLOOR, NUDGE_NONE } from "./src/nudge.mjs";
-import { clipMarker, planClips } from "./src/fallback.mjs";
+import { clipMarker, elideBlocker, elideHead, elideMarker, ELIDE_AT, ELIDE_DOWN_TO, knownLimit, NEW_SESSION_AFTER, planClips, planElide, SECOND_LEVEL_TOKENS } from "./src/fallback.mjs";
 import { estimateBodyTokens, estimateTokens, readRefusal, readUsage } from "./src/usage.mjs";
 
 // The one sentence a model reads before its first fold. It names the tool's real argument
@@ -41,7 +41,7 @@ const PROMPT = [
 ].join("");
 
 /** `foldableFrom`/`foldableTo` are refs already (`m00001`), never numbers: the note is display text. */
-export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], foreign = [], rejected = [], unrecognized = [], refusal = "", minRangeBytes = 0 }) {
+export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], foreign = [], rejected = [], unrecognized = [], refusal = "", minRangeBytes = 0, newSession = false }) {
   const base = PROMPT;
   const parts = [
     foldableFrom == null || foldableTo == null
@@ -86,6 +86,14 @@ export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], 
     );
   }
   if (refusal) parts.push(refusal);
+  if (newSession) {
+    // Said once per stuck run, on the pass that names it: three passes over the limit with the
+    // fallback already applied mean nothing left to cut, and a host that keeps asking pays the
+    // same oversized prompt until the window refuses it.
+    parts.push(
+      "[acp] 连续 3 轮压缩之后这个请求仍然超限,能折的、能省的都已经做完了;请开一个新会话,把要继续的部分带过去,旧历史用 decompress 按 ref 取回。",
+    );
+  }
   if (nudge) parts.push(nudge);
   return parts.join("\n");
 }
@@ -137,11 +145,13 @@ const CLIP_ID = /\[acp\] 已省略 [\d,]+ 字符,原文 id ([0-9a-f]{16})/;
  * sorts after its own end (measured: `m00385–m00374` in a 270-block fold, #17).
  *
  * A clip marker carries the block id it replaced, so the same rule applies to a cut unit: it is
- * still the same unit, only shorter.
+ * still the same unit, only shorter. An elision statement does the same with the span's start
+ * block: it stands where those turns were, so it wears the first one's ref.
  */
-function unitIds(units, folds = []) {
+function unitIds(units, folds = [], elisions = []) {
   const heads = new Map();
   for (const fold of folds) if (fold.startBlock) heads.set(markerHead(fold), fold.startBlock);
+  for (const elision of elisions) if (elision.startBlock) heads.set(elideHead(elision), elision.startBlock);
   return units.map((u) => {
     const text = String(u.text ?? "");
     // The client sends the marker back with the stamp in front of it, so the head is read past it.
@@ -707,13 +717,27 @@ export async function onRequest(body, ctx) {
 
     const session = openSession(cfg.storeDir, sessionKeyOf(ctx));
 
+    // How big this window is (wayfinder #19), from the three pieces of evidence that are not a
+    // guess: what a refusal named, what the owner declared, what the provider has already billed.
+    // Zero means unknown, and unknown keeps both legs below off - cutting a request that was fine
+    // is the one failure this hook cannot apologize for.
+    const limit = knownLimit({ cfg, ceiling: Number(session.refusal()?.limit) || 0, peak: session.peakInput() });
+    const sizeBefore = Math.max(estimateBodyTokens(body), Number(session.lastUsage()?.input) || 0);
+    const overLimit = cfg.fallback === "full" && limit > 0 && sizeBefore >= limit * ELIDE_AT;
+
     // The cap (wayfinder #18): one unit big enough to sink the request on its own. It runs
     // before refs are assigned so the ledger numbers the text actually sent, and it stores the
     // original before it cuts, because `decompress` is the only way back: a cut whose original
     // failed to store is abandoned rather than made. `fallback: "off"` leaves the request
     // byte-identical, and every exempt unit (media, own records, markers, ref-bearing prose) is
     // named in `clipBlocker` rather than checked here.
-    const plan = cfg.fallback === "off" ? { candidates: [], exempt: [] } : planClips({ units, cfg });
+    //
+    // Over the ratio the cap gets a lower ceiling: at 95% of a known window a 3 000-token tool
+    // result is not "fine", it is the difference between one more turn and a bounce (#19).
+    const plan =
+      cfg.fallback === "off"
+        ? { candidates: [], exempt: [] }
+        : planClips({ units, cfg, capTokens: overLimit ? Math.min(cfg.cap.unitTokens, SECOND_LEVEL_TOKENS) : 0 });
     const clips = [];
     const clipRefusals = [];
     let sent = body;
@@ -754,7 +778,7 @@ export async function onRequest(body, ctx) {
       }
     }
 
-    const ids = unitIds(units, session.folds());
+    const ids = unitIds(units, session.folds(), session.elisions());
 
     // A ref is the only way a compress range can name a unit, so leaving system/developer
     // prompts unnumbered makes them unfoldable by construction rather than by a check.
@@ -779,6 +803,113 @@ export async function onRequest(body, ctx) {
     const lastUsage = session.lastUsage();
     const bodyTokens = estimateBodyTokens(sent);
     const contextTokens = Math.max(bodyTokens, Number(lastUsage?.input) || 0);
+
+    // The fallback's second leg (wayfinder #19): over a known limit, the oldest whole turns leave
+    // the wire. This is the pass that cannot ask again - the model may simply never emit a
+    // compress call - so what it writes has to read as mechanical, and every dropped unit's
+    // original is stored before it goes: an elision without a way back is deletion.
+    let elided = null;
+    if (overLimit && window && !created.length) {
+      const inFold = new Set();
+      for (const range of ranges) for (let i = range.start; i <= range.end; i += 1) inFold.add(i);
+      const choice = planElide({
+        units,
+        turns: turnStarts(units, units.length),
+        from: window.from,
+        to: window.to,
+        tokens: contextTokens,
+        target: limit * ELIDE_DOWN_TO,
+        folded: inFold,
+      });
+      if (choice) {
+        // A whole turn can still begin with a tool result whose call sits in the turn before it,
+        // and a result without its call is a request the provider rejects - so the span is
+        // widened the same way a fold range is.
+        const safe = pairSafe(units, choice.from, choice.to);
+        const span = units.slice(safe.start, safe.end + 1);
+        const blocked = span.map((unit) => elideBlocker(unit, inFold)).find(Boolean);
+        const startRef = String(units[safe.start]?.ref ?? "");
+        const endRef = String(units[safe.end]?.ref ?? "");
+        const stored =
+          !blocked &&
+          Boolean(startRef) &&
+          Boolean(endRef) &&
+          span.every(
+            (unit) =>
+              Boolean(unit.blockId) &&
+              session.withLock(() => session.storeOriginal(unit.blockId, { role: unit.role, text: unit.text, ref: unit.ref ?? null, at: Date.now() })),
+          );
+        if (stored) {
+          elided = {
+            from: safe.start,
+            to: safe.end,
+            count: span.length,
+            turns: choice.turns,
+            startRef,
+            endRef,
+            startBlock: units[safe.start].blockId,
+            tokens: span.reduce((n, unit) => n + estimateTokens(unit.text), 0),
+            bytes: span.reduce((n, unit) => n + utf8Bytes(unit.text), 0),
+          };
+          session.withLock(() =>
+            session.recordElisions([
+              {
+                id: `${startRef}–${endRef}`,
+                at: Date.now(),
+                startRef,
+                endRef,
+                startBlock: elided.startBlock,
+                count: elided.count,
+                turns: elided.turns,
+                bytes: elided.bytes,
+                reason: "over-limit",
+              },
+            ]),
+          );
+        }
+      }
+    }
+
+    // Counted passes, not clocked ones: "three in a row" is the only shape in which a host that
+    // keeps asking can be told apart from a session that grew once.
+    const previousElide = session.elide();
+    let streak = Number(previousElide?.streak ?? 0);
+    let notified = Boolean(previousElide?.notified);
+    let newSession = false;
+    if (created.length) {
+      // A real fold answers the same pressure, so the count starts over.
+      streak = 0;
+      notified = false;
+      session.clearElide();
+    } else if (overLimit) {
+      const after = Math.max(0, contextTokens - (elided ? elided.tokens : 0));
+      const stillOver = after >= limit * ELIDE_AT;
+      streak = stillOver ? streak + 1 : 0;
+      if (!stillOver) notified = false;
+      if (stillOver && streak >= NEW_SESSION_AFTER && !notified) {
+        newSession = true;
+        notified = true;
+      }
+      session.setElide({
+        at: Date.now(),
+        streak,
+        notified,
+        limit: Math.round(limit),
+        target: Math.round(limit * ELIDE_DOWN_TO),
+        refs: elided ? [elided.startRef, elided.endRef] : previousElide?.refs ?? [],
+      });
+    } else if (previousElide) {
+      // Under the ratio: nothing to say, and the next stuck run is a new run.
+      streak = 0;
+      notified = false;
+      session.clearElide();
+    }
+    if (cfg.debug && (overLimit || elided)) {
+      console.error(
+        "[magpie-acp-context] elide",
+        JSON.stringify({ limit, overLimit, elided: elided ? `${elided.startRef}–${elided.endRef} ${elided.count}` : null, streak, newSession }),
+      );
+    }
 
     const foldedBytes = session.folds().reduce((n, f) => n + (Number(f.bytes) || 0), 0);
     const sinceGrowth = Math.max(0, contextTokens - Math.round(foldedBytes / 3.5));
@@ -846,6 +977,15 @@ export async function onRequest(body, ctx) {
       clips: clips.length,
       clipBytes: clips.reduce((n, c) => n + Math.max(0, c.beforeBytes - c.afterBytes), 0),
       clipRefused: clipRefusals.slice(0, 3),
+      // The elision is the other half of the hook's own work: `folds` is what the agent did,
+      // `clips`+`elided` is what happened when nobody did anything.
+      limit: limit || null,
+      overLimit,
+      elided: elided
+        ? { from: elided.startRef, to: elided.endRef, count: elided.count, turns: elided.turns, tokens: elided.tokens, bytes: elided.bytes }
+        : null,
+      elideStreak: streak,
+      newSession,
       // A held nudge is a decision, not an absence: "nothing grew" and "the window could not
       // buy anything back" are different findings, and from the outside they look identical.
       nudgeHeld:
@@ -864,10 +1004,14 @@ export async function onRequest(body, ctx) {
       adapter.stamp(next, unit.index, `[${unit.ref}]`);
     }
 
-    if (ranges.length) {
+    if (ranges.length || elided) {
+      // One descending pass for both, because an elision can sit before a fold and splicing the
+      // lower index first would move the higher one out from under its own range.
+      const splices = ranges.map((range) => ({ start: range.start, end: range.end, text: markerText(range.fold) }));
+      if (elided) splices.push({ start: elided.from, end: elided.to, text: elideMarker(elided) });
       const arr = adapter.unitArray(next);
-      for (const range of ranges.slice().sort((a, b) => b.start - a.start)) {
-        arr.splice(range.start, range.end - range.start + 1, adapter.makeMarker(markerText(range.fold)));
+      for (const splice of splices.sort((a, b) => b.start - a.start)) {
+        arr.splice(splice.start, splice.end - splice.start + 1, adapter.makeMarker(splice.text));
       }
     }
 
@@ -882,6 +1026,7 @@ export async function onRequest(body, ctx) {
         unrecognized,
         refusal: refusalNote(refusal),
         minRangeBytes: cfg.minRangeBytes,
+        newSession,
       });
       if (cfg.injectStyle === "system-suffix") adapter.appendSystem(next, note);
       else adapter.appendNote(next, note);

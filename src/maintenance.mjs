@@ -99,6 +99,8 @@ export function scanStore(storeDir) {
       turns: Array.isArray(state.turns) ? state.turns : [],
       clips: Array.isArray(state.clips) ? state.clips : [],
       clipRefusals: Array.isArray(state.clipRefusals) ? state.clipRefusals : [],
+      elisions: Array.isArray(state.elisions) ? state.elisions : [],
+      elide: state.elide ?? null,
     };
   });
   const blocks = blockFiles(storeDir);

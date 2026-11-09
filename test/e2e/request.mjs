@@ -51,6 +51,20 @@ if (process.argv.includes("--big")) {
     { role: "user", content: "继续" },
   ];
 }
+// The elision fixture: six whole turns nobody folded, each carrying a sentinel only that turn
+// has. With a known limit and `fallback: "full"`, the earliest of them must leave the wire and
+// come back through `decompress` by the ref the statement names.
+if (process.argv.includes("--over")) {
+  const messages = [{ role: "system", content: "You are a careful agent." }];
+  for (let i = 1; i <= 6; i += 1) {
+    messages.push(
+      { role: "user", content: `早期需求-${i}:${"u".repeat(4000)}` },
+      { role: "assistant", content: `回答-${i}:${"a".repeat(4000)}` },
+    );
+  }
+  messages.push({ role: "user", content: "继续,把结论写出来。" });
+  body.messages = messages;
+}
 // The tool gate decides on what the client DECLARES: a body that names tools but none of
 // ours is a client that can never call compress, and one that names ours can.
 if (process.argv.includes("--foreign-tools")) body.tools = [{ type: "function", function: { name: "read_file" } }];
