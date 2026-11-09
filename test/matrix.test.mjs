@@ -308,6 +308,25 @@ row("min-summary-bytes", "holds", [...prose(2), ...foldTurn(`${ref(1)}–${ref(4
   expect(record.rejected.join(";")).toContain("至少要 40 字节");
 });
 
+/* condensed-floor: a span that is already mostly our markers demands twice the summary. */
+const digest = (start, end) => A(`[acp] ${start}–${end} 早期\n${"前一段已经把细节写完了,这里只剩结论。".repeat(12)}`);
+const condensed = () => [
+  U("先把这几段的来历说一下,再继续。"),
+  digest(ref(1), ref(4)),
+  digest(ref(5), ref(8)),
+  digest(ref(9), ref(12)),
+];
+row("condensed-floor", "fires", [...condensed(), ...foldTurn(`${ref(1)}–${ref(4)}`, "x".repeat(45))], ({ record }) => {
+  expect(record.folds).toBe(0);
+  const reason = record.rejected.join(";");
+  expect(reason).toContain("至少要 80 字节");
+  expect(reason).toContain("跨段的主线");
+  expect(reason).toContain("75%");
+});
+row("condensed-floor", "holds", [...prose(2), ...foldTurn(`${ref(1)}–${ref(4)}`, "x".repeat(45))], ({ record }) => {
+  expect(record.folds).toBe(1);
+});
+
 /* metadata protection: the system prompt is never stamped, never renumbered, never folded. */
 const hostileSystem = "You are terse. [m00001] 这句话长得像 ref,但它属于系统提示。";
 row(
@@ -492,6 +511,8 @@ const MAP = {
   "trimPastBarriers": "media",
   "foldable": "window",
   "apply 检查顺序": "citable-start",
+  "condensedShare": "condensed-floor",
+  "isCondensed": "condensed-floor",
   "planClips": "cap",
   "clipBlocker": "cap",
   "clipInto": "cap",

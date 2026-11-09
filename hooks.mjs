@@ -21,7 +21,7 @@ import { refusalNote } from "./src/maintenance.mjs";
 import { adapterFor, advertisedToolNames } from "./src/protocol.mjs";
 import { recordSkip } from "./src/skips.mjs";
 import { openSession } from "./src/store.mjs";
-import { canCallOwnTools, compressCalls, deviceTarget, MIN_SUMMARY_BYTES, ownToolUnit, unknownShapes } from "./src/compress.mjs";
+import { canCallOwnTools, compressCalls, CONDENSED_SHARE, CONDENSED_SUMMARY_BYTES, deviceTarget, MIN_SUMMARY_BYTES, ownToolUnit, unknownShapes } from "./src/compress.mjs";
 import { blockIdOf, formatRef, neutralizeMarkers, sha256, utf8Bytes } from "./src/text.mjs";
 import { decideNudge, nudgeText, NUDGE_BELOW_FLOOR, NUDGE_NONE } from "./src/nudge.mjs";
 import { clipMarker, elideBlocker, elideHead, elideMarker, ELIDE_AT, ELIDE_DOWN_TO, knownLimit, NEW_SESSION_AFTER, planClips, planElide, SECOND_LEVEL_TOKENS } from "./src/fallback.mjs";
@@ -41,7 +41,7 @@ const PROMPT = [
 ].join("");
 
 /** `foldableFrom`/`foldableTo` are refs already (`m00001`), never numbers: the note is display text. */
-export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], foreign = [], rejected = [], unrecognized = [], refusal = "", minRangeBytes = 0, newSession = false }) {
+export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], foreign = [], rejected = [], unrecognized = [], refusal = "", minRangeBytes = 0, newSession = false, condensed = 0 }) {
   const base = PROMPT;
   const parts = [
     foldableFrom == null || foldableTo == null
@@ -53,7 +53,15 @@ export function buildNote({ foldableFrom, foldableTo, nudge = "", skipped = [], 
   if (Number(minRangeBytes) > 0) {
     parts.push(
       `一次折叠覆盖的原文至少 ${Number(minRangeBytes)} 字节(约 ${Math.round(Number(minRangeBytes) / 2.5)} tokens);不够的先留在历史里,攒够了再折。`,
-      `摘要至少 ${MIN_SUMMARY_BYTES} 字节:被折叠的原文之后只剩摘要,写短了等于把那段历史删掉。`,
+    );
+    // One number at a time: a condensed span states the doubled floor instead of the base one.
+    if (!Number(condensed)) parts.push(`摘要至少 ${MIN_SUMMARY_BYTES} 字节:被折叠的原文之后只剩摘要,写短了等于把那段历史删掉。`);
+  }
+  if (Number(condensed) > 0) {
+    // The advertised span is already mostly our own summaries, so this fold must not thin them
+    // again: the thread and the topic list are what a later reader cannot rebuild from less.
+    parts.push(
+      `当前可折范围里有 ${Math.round(Number(condensed) * 100)}% 是你自己写的摘要:折它时摘要至少 ${CONDENSED_SUMMARY_BYTES} 字节,并且要写出跨段的主线(这些段之间发生了什么、为什么)、再加一份主题清单;只把旧的几句话换个说法等于把这件事删掉。`,
     );
   }
   if (skipped.length) {
@@ -107,6 +115,31 @@ export function markerText(fold) {
 function markerHead(fold) {
   return `[acp] ${fold.startRef}–${fold.endRef}`;
 }
+
+/** A folded block as it sits in the history: stamped, then the marker head and its summary. */
+const MARKER_HEAD = /^\[acp\] m\d{5,}–m\d{5,}/;
+
+/**
+ * How much of a span is already a summary of its own (#14).
+ *
+ * Only fold markers count. An elision statement names what left the wire but carries no digest, and
+ * a clip marker is a hole in one unit - counting either would raise the floor on a history that has
+ * nothing to lose. Material means `stampable`, so tool traffic and system text are neither counted
+ * nor demanded.
+ */
+function condensedShare(units, from, to) {
+  let material = 0;
+  let folded = 0;
+  for (let i = Math.max(0, from); i <= to && i < units.length; i += 1) {
+    const unit = units[i];
+    if (!unit?.stampable) continue;
+    material += 1;
+    if (MARKER_HEAD.test(unit.text.replace(/^\[m\d{5,}\] /, ""))) folded += 1;
+  }
+  return material > 0 ? folded / material : 0;
+}
+
+const isCondensed = (units, from, to) => condensedShare(units, from, to) >= CONDENSED_SHARE;
 
 /**
  * Folds the model is actually reading this turn.
@@ -555,8 +588,16 @@ export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
         continue;
       }
       const summaryBytes = utf8Bytes(summary);
-      if (summaryBytes < MIN_SUMMARY_BYTES) {
-        rejected.push(`${label}:摘要只有 ${summaryBytes} 字节,至少要 ${MIN_SUMMARY_BYTES} 字节;被折叠的原文之后只剩摘要`);
+      // A range that is already half summary gets a doubled floor: the first fold kept the prose,
+      // the second keeps prose about prose, and a third level would have only the topic words left.
+      const condensed = isCondensed(units, safe.start, safe.end);
+      const floorSummary = condensed ? CONDENSED_SUMMARY_BYTES : MIN_SUMMARY_BYTES;
+      if (summaryBytes < floorSummary) {
+        rejected.push(
+          condensed
+            ? `${label}:摘要只有 ${summaryBytes} 字节,至少要 ${floorSummary} 字节——这段里 ${Math.round(condensedShare(units, safe.start, safe.end) * 100)}% 已经是你写的摘要,再折一次要写跨段的主线(哪些事连在一起、为什么)和一份主题清单`
+            : `${label}:摘要只有 ${summaryBytes} 字节,至少要 ${floorSummary} 字节;被折叠的原文之后只剩摘要`,
+        );
         continue;
       }
       const startBlock = units[safe.start].blockId;
@@ -1027,6 +1068,7 @@ export async function onRequest(body, ctx) {
         refusal: refusalNote(refusal),
         minRangeBytes: cfg.minRangeBytes,
         newSession,
+        condensed: foldable && isCondensed(units, foldable.from, foldable.to) ? condensedShare(units, foldable.from, foldable.to) : 0,
       });
       if (cfg.injectStyle === "system-suffix") adapter.appendSystem(next, note);
       else adapter.appendNote(next, note);

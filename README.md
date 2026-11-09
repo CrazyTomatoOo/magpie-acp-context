@@ -97,6 +97,7 @@ are:
 | `超出可折叠窗口(m00003–m00019),最近的 1 轮要留着` | the range reaches into the protected tail |
 | `这段只有 N 字节,低于 minRangeBytes=5000` | too small to be worth a summary — nothing is gained by folding it |
 | `摘要只有 N 字节,至少要 40 字节;被折叠的原文之后只剩摘要` | the summary would be shorter than what the model needs to carry on |
+| `摘要只有 N 字节,至少要 80 字节——这段里 75% 已经是你写的摘要,再折一次要写跨段的主线…和一份主题清单` | the span is already mostly our own markers: the first fold kept the prose, the second keeps prose about prose |
 
 ## Tools
 

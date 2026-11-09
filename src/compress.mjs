@@ -11,6 +11,13 @@
 // a 100:1 cut - the floor is there to catch the empty gesture, not to shape good prose.
 export const MIN_SUMMARY_BYTES = 40;
 
+// A summary of summaries loses the thread twice: the first fold keeps prose, the second keeps prose
+// about prose, and nothing in the range still holds the actual turn of events. Above this share of
+// already-folded material the floor doubles, and the note asks for the thread plus a topic list -
+// which is what a third level would otherwise have to reconstruct from what is left.
+export const CONDENSED_SHARE = 0.5;
+export const CONDENSED_SUMMARY_BYTES = MIN_SUMMARY_BYTES * 2;
+
 export const COMPRESS_ACK = "折叠会在下一次请求时按历史里真实的 ref 结算";
 
 export const COMPRESS_TOOL_NAMES = new Set([
