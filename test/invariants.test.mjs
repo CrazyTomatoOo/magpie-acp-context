@@ -16,7 +16,7 @@ const unit = (role, text, { media = false, toolCalls = [] } = {}) => ({
 
 /**
  * Every fixture shares one skeleton so the window lands where it matters: indices 0-5 are the
- * variable part (the segment under test), 6-10 are a compress call and the protected tail.
+ * variable part (the segment under test), 8-12 are a compress call and the protected tail.
  *
  * The property, once per history: whatever `planFolds` advertises as the foldable range must
  * settle when folded verbatim. #16 (a start on a tool result) and #10 (a range crossing media)
@@ -24,8 +24,10 @@ const unit = (role, text, { media = false, toolCalls = [] } = {}) => ({
  */
 function build(rows, range = "m00001–m00001", padText = filler(12)) {
   // Six variable units, so the window (which stops before the protected tail) contains them.
+  // Four turns of padding, so trimming at a barrier or a media unit still leaves a whole turn
+  // inside the window (#11): a window that only spans part of a turn advertises nothing at all.
   const padded = [...rows];
-  while (padded.length < 6) padded.push(unit(padded.length % 2 ? "assistant" : "user", padText));
+  while (padded.length < 8) padded.push(unit(padded.length % 2 ? "assistant" : "user", padText));
   const raw = [
     ...padded,
     unit("assistant", "", { toolCalls: [{ name: "compress", input: { content: `${range} 早期\n读了几轮文件,结论是填充文本,不需要逐字保留,后来的人知道这一点就够继续了。` } }] }),

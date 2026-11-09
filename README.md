@@ -323,10 +323,10 @@ facts and the measured run.
 ## Tests
 
 ```sh
-bun test test/                       # 242 tests across 14 files: refs, folds, protocols, safety rules,
-                                     # the offer/apply invariant matrix, tools, usage shapes, nudge rules,
-                                     # eviction, compaction, reconcile, CLI, inherited sessions,
-                                     # and the tool-name shapes real wires send back
+bun test test/                       # 247 tests across 15 files: refs, folds, protocols, safety rules,
+                                     # the offer/apply invariant matrix, whole-turn alignment, tools, usage
+                                     # shapes, nudge rules, eviction, compaction, reconcile, CLI, inherited
+                                     # sessions, and the tool-name shapes real wires send back
 ./test/e2e/run.sh                    # container end-to-end: 6,933 B request → 1,269 B on the wire,
                                      # a nudge on the wire, all four tools over MCP,
                                      # the billed prompt tokens landing in acp_status,

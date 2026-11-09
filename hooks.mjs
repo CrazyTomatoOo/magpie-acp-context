@@ -151,6 +151,14 @@ function firstInSet(set, start, end) {
   return -1;
 }
 
+/** The one sentence a refused range gets when a barrier sits inside it, naming that barrier. */
+function barrierRefusal(label, unit, refs, isMedia) {
+  const where = refs[unit.blockId] ?? "?";
+  return isMedia
+    ? `${label}:范围含媒体消息 ${where}(图片/文件/音频),原文只存文本,折了之后 decompress 也取不回媒体;请把范围收在它之后`
+    : `${label}:范围含插件自己的压缩记录 ${where}(压缩/取回/状态的调用或结果),它要留在上下文里说明折过哪些段;请把范围收在它之后`;
+}
+
 /**
  * The one judgment an offer and an apply share: a unit a fold can be anchored on.
  *
@@ -184,6 +192,56 @@ function trimPastBarriers(units, window, barriers) {
     return from <= window.to ? { from, to: window.to } : null;
   }
   return window;
+}
+
+/**
+ * The summary of a fold speaks for the work behind it, so the range has to begin where that work
+ * began: a start inside a turn leaves the instruction that asked for the work outside the
+ * summary, and the summary then claims a task the reader cannot find the request for (#11).
+ *
+ * Both boundaries are pushed out to the enclosing turn edges. When that would leave `[lower,
+ * upper]` the turn is dropped whole instead of being cut - a half turn keeps exactly the lie the
+ * mid-turn start had, and the remaining turns are still complete. `null` means no whole turn
+ * fits, which the caller reports rather than folds.
+ */
+export function alignToTurns(units, start, end, lower, upper, starts = turnStarts(units, units.length)) {
+  const last = units.length - 1;
+  const startOf = (i) => {
+    let s = starts.length ? starts[0] : 0;
+    for (const t of starts) if (t <= i) s = t;
+    return Math.min(s, last);
+  };
+  const endOf = (i) => {
+    for (const t of starts) if (t > i) return t - 1;
+    return last;
+  };
+  let s = startOf(start);
+  let e = endOf(end);
+  if (s < lower) {
+    // The turn holding `start` begins before the window: take the next whole turn instead.
+    const next = starts.find((t) => t >= lower);
+    if (next === undefined) return null;
+    s = next;
+  }
+  if (e > upper) {
+    // The turn holding `end` closes after the window: end at the previous whole turn.
+    let prev = -1;
+    for (const t of [...starts, units.length]) {
+      const close = t - 1;
+      if (close <= upper && close > prev) prev = close;
+    }
+    if (prev < 0) return null;
+    e = prev;
+  }
+  if (s > end || e < start || s > e) return null;
+  return { start: s, end: e };
+}
+
+/** Whether `i` closes the turn it sits in, so a fold may end there even on a tool result. */
+function atTurnEnd(units, i, starts = turnStarts(units, units.length)) {
+  let next = -1;
+  for (const t of starts) if (t > i) { next = t; break; }
+  return next > 0 ? next - 1 === i : i === units.length - 1;
 }
 
 /** The newest unit a range can END at without dragging its tool result past `cap`. */
@@ -259,6 +317,9 @@ export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
     if (units[i].media) { barriers.add(i); media.add(i); }
   }
   const window = window0 ? trimPastBarriers(units, window0, barriers) : null;
+  // Turn boundaries are read once: an apply loop can carry hundreds of calls, and each one would
+  // otherwise rescan the history to find the turn it sits in.
+  const turns = turnStarts(units, units.length);
   const created = [];
   const unresolved = [];
   const foreign = [];
@@ -313,11 +374,15 @@ export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
   // call inside it, and that unit is no more foldable than the record it follows (#16).
   const foldable = window
     ? (() => {
-        const from = citableStart(units, firstUncoveredFrom(window.from, window.to), window.to);
-        if (from > window.to) return null;
-        const spanBytes = units.slice(from, window.to + 1).reduce((n, u) => n + utf8Bytes(u.text), 0);
+        const from0 = citableStart(units, firstUncoveredFrom(window.from, window.to), window.to);
+        if (from0 > window.to) return null;
+        const aligned = alignToTurns(units, from0, window.to, window.from, windowEnd, turns);
+        if (!aligned) return null;
+        const from = citableStart(units, Math.max(aligned.start, window.from), aligned.end);
+        if (from > aligned.end) return null;
+        const spanBytes = units.slice(from, aligned.end + 1).reduce((n, u) => n + utf8Bytes(u.text), 0);
         if (spanBytes < Number(cfg.minRangeBytes)) return null;
-        return { from, to: window.to };
+        return { from, to: aligned.end };
       })()
     : null;
   for (const call of compressCalls(units)) {
@@ -351,24 +416,51 @@ export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
         rejected.push(`${label}:起点在终点之后`);
         continue;
       }
-      if (!citable(units[startIndex]) || !citable(units[endIndex])) {
+      if (!citable(units[startIndex]) || !(citable(units[endIndex]) || atTurnEnd(units, endIndex, turns))) {
         rejected.push(`${label}:两端的消息不可折叠(工具调用或工具结果)`);
         continue;
       }
+      // Barriers answer on the range the model wrote: "your range holds media" is something it can
+      // act on, while widening first would report a window complaint instead (#9, #10).
+      const raw = pairSafe(units, startIndex, endIndex);
+      const rawMedia = firstInSet(media, raw.start, raw.end);
+      if (rawMedia >= 0) {
+        rejected.push(barrierRefusal(label, units[rawMedia], refs, true));
+        continue;
+      }
+      const rawBarrier = firstInSet(barriers, raw.start, raw.end);
+      if (rawBarrier >= 0) {
+        rejected.push(barrierRefusal(label, units[rawBarrier], refs, false));
+        continue;
+      }
+      // A start inside a span that already settled is answered with where to start instead, and
+      // checked on the range as written: widening would swallow the whole span and go silent.
       if (coveredBySettled(startIndex, endIndex)) continue;
-      const safe = pairSafe(units, startIndex, endIndex);
+      const rawCover = coveringFoldOf(startIndex);
+      if (rawCover !== undefined) {
+        const coverEnd = Number(idToIndex.get(rawCover.endRef));
+        rejected.push(`${label}:起点落在已结算的折叠 ${rawCover.startRef}–${rawCover.endRef} 里,请从 ${refs[units[coverEnd + 1]?.blockId] ?? "该折叠之后"} 开始`);
+        continue;
+      }
+      // The range is widened to whole turns before anything else looks at it (#11): a summary that
+      // starts mid-turn speaks for work whose instruction it does not contain. A range that cannot
+      // be aligned without leaving the window or cutting a turn is refused, never trimmed.
+      const aligned = alignToTurns(units, startIndex, endIndex, window ? window.from : 0, windowEnd >= 0 ? windowEnd : units.length - 1, turns);
+      if (!aligned) {
+        rejected.push(`${label}:范围对不齐整轮(起点所在的轮在窗口外,或终点所在的轮超出窗口),请从某一轮的起点开始`);
+        continue;
+      }
+      if (coveredBySettled(aligned.start, aligned.end)) continue;
+      const safe = pairSafe(units, aligned.start, aligned.end);
+      // Widening can drag a barrier into the span that the model's own range did not cover.
       const held = firstInSet(media, safe.start, safe.end);
       if (held >= 0) {
-        rejected.push(
-          `${label}:范围含媒体消息 ${refs[units[held].blockId] ?? "?"}(图片/文件/音频),原文只存文本,折了之后 decompress 也取不回媒体;请把范围收在它之后`,
-        );
+        rejected.push(barrierRefusal(label, units[held], refs, true));
         continue;
       }
       const barrier = firstInSet(barriers, safe.start, safe.end);
       if (barrier >= 0) {
-        rejected.push(
-          `${label}:范围含插件自己的压缩记录 ${refs[units[barrier].blockId] ?? "?"}(压缩/取回/状态的调用或结果),它要留在上下文里说明折过哪些段;请把范围收在它之后`,
-        );
+        rejected.push(barrierRefusal(label, units[barrier], refs, false));
         continue;
       }
       const cover = coveringFoldOf(safe.start);
@@ -388,14 +480,14 @@ export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
         rejected.push(`${label}:这段只有 ${bytes} 字节,低于 minRangeBytes=${floor}`);
         continue;
       }
+      // The summary is the only thing left of the range afterwards, so a couple of characters is
+      // not a summary, it is a deletion with a receipt. A real client folded 45,542 bytes into the
+      // two-byte topic word "填充" before this floor existed.
       const summary = String(entry.summary || "").slice(0, Number(cfg.maxSummaryChars));
       if (!summary.trim()) {
         rejected.push(`${label}:摘要为空`);
         continue;
       }
-      // The summary is the only thing left of the range afterwards, so a couple of characters
-      // is not a summary, it is a deletion with a receipt. A real client folded 45,542 bytes
-      // into the two-byte topic word "填充" before this floor existed.
       const summaryBytes = utf8Bytes(summary);
       if (summaryBytes < MIN_SUMMARY_BYTES) {
         rejected.push(`${label}:摘要只有 ${summaryBytes} 字节,至少要 ${MIN_SUMMARY_BYTES} 字节;被折叠的原文之后只剩摘要`);

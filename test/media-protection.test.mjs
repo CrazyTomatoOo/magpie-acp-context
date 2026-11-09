@@ -16,6 +16,8 @@ function history({ withImage = true, imageAt = 1, compressRange = "m00001–m000
     ["user", filler(10), true, []],
     ["assistant", filler(14), true, []],
     ["user", filler(12), true, []],
+    // A turn after the media so the advertised window can hold one whole turn (#11).
+    ["user", filler(10), true, []],
     [
       "assistant",
       "",

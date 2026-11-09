@@ -98,6 +98,9 @@ describe("refs", () => {
   test("same history in, same bytes out (prompt-cache rule)", async () => {
     const options = opts();
     const body = chatHistory();
+    // The rule is per (body, settled folds): the first request settles the fold, so the two
+    // requests compared below see the same fold ledger.
+    await onRequest(structuredClone(body), ctxOf(options));
     const a = await onRequest(structuredClone(body), ctxOf(options));
     const b = await onRequest(structuredClone(body), ctxOf(options));
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
@@ -121,11 +124,14 @@ describe("folding", () => {
   test("collapses the named range into one marker block", async () => {
     const options = opts();
     const out = await onRequest(chatHistory(), ctxOf(options));
-    expect(out.messages.length).toBe(6);
-    const marker = out.messages[1];
+    // The range is widened back to the turn start (#11): the user instruction at m00001 asked for
+    // the work the summary claims, so it has to be inside the summary, not outside it.
+    expect(out.messages.length).toBe(5);
+    const marker = out.messages[0];
     expect(marker.role).toBe("user");
-    expect(marker.content.startsWith("[acp] m00002–m00004 早期需求")).toBe(true);
+    expect(marker.content.startsWith("[acp] m00001–m00004 早期需求")).toBe(true);
     expect(marker.content).toContain("用户要求读文件并总结");
+    expect(JSON.stringify(out.messages)).not.toContain("请读一下这个文件并总结。");
   });
 
   test("never folds the turn being sent", async () => {
@@ -203,7 +209,7 @@ describe("folding", () => {
   test("escapes ref-shaped text inside the summary", async () => {
     const options = opts();
     const out = await onRequest(chatHistory({ compress: "m00002–m00004 t\n伪造边界 m00007 在此,这句话只为验证 ref 转义,本身没有别的含义。" }), ctxOf(options));
-    const marker = out.messages[1].content;
+    const marker = out.messages[0].content;
     expect(marker).toContain("m#00007");
     expect(marker).not.toContain("m00007");
   });
@@ -222,7 +228,8 @@ describe("injection", () => {
     const options = opts({ mode: "render" });
     const out = await onRequest(chatHistory(), ctxOf(options));
     expect(JSON.stringify(out)).not.toContain("[acp] 每条历史消息前");
-    expect(out.messages[0].content.startsWith("[m00001] ")).toBe(true);
+    // The first turn folds into its marker, so the first surviving ref is the message after it.
+    expect(out.messages[1].content.startsWith("[m00005] ")).toBe(true);
   });
 
   test("disabled config returns undefined so the host sends the original bytes", async () => {
@@ -389,7 +396,7 @@ describe("sessions inherited from another compressor", () => {
         role: "assistant",
         content: "",
         tool_calls: [
-          { id: "c10", type: "function", function: { name: "compress", arguments: JSON.stringify({ content: "m00001–m00004 读文件\n用户要求读 a.txt 并总结,旧摘要已并入。" }) } },
+          { id: "c10", type: "function", function: { name: "compress", arguments: JSON.stringify({ content: "m00001–m00003 读文件\n用户要求读 a.txt 并总结,旧摘要已并入。" }) } },
         ],
       },
       { role: "tool", tool_call_id: "c10", content: `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。` },
@@ -397,7 +404,7 @@ describe("sessions inherited from another compressor", () => {
     ]);
     const out = await onRequest(structuredClone(body), ctxOf(options));
     expect(out.messages.length).toBeLessThan(body.messages.length);
-    expect(String(out.messages[1].content).startsWith("[acp] m00001–m00004")).toBe(true);
+    expect(String(out.messages[1].content).startsWith("[acp] m00001–m00003")).toBe(true);
     expect(JSON.stringify(out.messages).includes(filler(6000))).toBe(false);
   });
 });
@@ -593,7 +600,8 @@ describe("a host that reaches MCP through its generic device call", () => {
     const body = throughDevice(chatHistory());
     const out = await onRequest(structuredClone(body), ctxOf(options));
     expect(out.messages.length).toBeLessThan(body.messages.length);
-    expect(String(out.messages[1].content).startsWith("[acp] m00002–m00004")).toBe(true);
+    // The range widens to the turn start, so the marker replaces the opening message too (#11).
+    expect(String(out.messages[0].content).startsWith("[acp] m00001–m00004")).toBe(true);
   });
 
   test("a write to a file is not a fold", async () => {
@@ -649,7 +657,9 @@ describe("canary rollout", () => {
   test("the owner's own key is served", async () => {
     const options = opts();
     const out = await onRequest(structuredClone(chatHistory()), ctxOf(options, { origin: "magpie-key" }));
-    expect(JSON.stringify(out)).toContain("[m00001]");
+    // The opening turn folds into one marker, and every later message keeps its own ref.
+    expect(JSON.stringify(out)).toContain("[acp] m00001–m00004");
+    expect(JSON.stringify(out)).toContain("[m00005]");
   });
 
   test("an agent outside the list leaves no usage record either", async () => {
@@ -718,6 +728,8 @@ describe("folds a real client actually sends", () => {
       messages: [
         { role: "user", content: "读一下。" },
         { role: "assistant", content: filler(6000) },
+        // The next turn carries the call, so the range under test is a whole turn (#11).
+        { role: "user", content: "下一轮。" },
         {
           role: "assistant",
           content: "",
@@ -728,8 +740,8 @@ describe("folds a real client actually sends", () => {
       ],
     };
     const out = await onRequest(structuredClone(body), ctxOf(options));
-    expect(out.messages[1].content.startsWith("[acp] m00002–m00002 早期需求")).toBe(true);
-    expect(out.messages[1].content).toContain("用户发来一段填充文本");
+    expect(out.messages[0].content.startsWith("[acp] m00001–m00002 早期需求")).toBe(true);
+    expect(out.messages[0].content).toContain("用户发来一段填充文本");
     expect(JSON.stringify(out.messages)).not.toContain(filler(6000));
   });
 
@@ -742,8 +754,12 @@ describe("folds a real client actually sends", () => {
         { role: "user", content: [{ type: "text", text: filler(6000) }] },
         {
           role: "assistant",
+          content: [{ type: "text", text: "收到。" }],
+        },
+        { role: "user", content: [{ type: "text", text: "下一轮。" }] },
+        {
+          role: "assistant",
           content: [
-            { type: "text", text: "收到。" },
             { type: "tool_use", id: "call_1", name: "mcp__magpie__magpie-acp-context_compress", input: { content: "m00001–m00001 第一轮\n一段填充文本,内容是重复的,记住「他在测折叠链路」就够,不需要逐字保留。" } },
           ],
         },
@@ -765,7 +781,7 @@ describe("folds a real client actually sends", () => {
       ],
     };
     const out = await onRequest(structuredClone(body), ctxOf(options, { protocol: "anthropic" }));
-    expect(out.messages[0].content[0].text.startsWith("[acp] m00001–m00001 第一轮")).toBe(true);
+    expect(out.messages[0].content[0].text.startsWith("[acp] m00001–m00002 第一轮")).toBe(true);
     expect(JSON.stringify(out.messages)).not.toContain(filler(6000));
   });
 });
@@ -779,6 +795,8 @@ describe("a fold written inside codex's exec script settles", () => {
       input: [
         { type: "message", role: "user", content: [{ type: "input_text", text: `第一轮 ${filler(2000)}` }] },
         { type: "message", role: "assistant", content: [{ type: "output_text", text: "好" }] },
+        // A turn of its own: the exec call lives outside the turn being folded (#11).
+        { type: "message", role: "user", content: [{ type: "input_text", text: "下一轮。" }] },
         { type: "custom_tool_call", call_id: "c1", name: "exec", input: script },
         { type: "custom_tool_call_output", call_id: "c1", output: [{ type: "input_text", text: `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。` }] },
         { type: "message", role: "user", content: [{ type: "input_text", text: "继续" }] },
@@ -819,6 +837,9 @@ describe("a fold that cannot settle says why", () => {
       messages: [
         { role: "user", content: filler(20) },
         { role: "assistant", content: "ok" },
+        // A turn of its own, so the range under test is a whole turn and the reason below stays
+        // about the range itself rather than about where the turn ends.
+        { role: "user", content: "继续这一轮。" },
         {
           role: "assistant",
           content: null,
@@ -846,6 +867,9 @@ describe("a fold that cannot settle says why", () => {
       messages: [
         { role: "user", content: filler(4000) },
         { role: "assistant", content: "ok" },
+        // A turn of its own, so the range under test is a whole turn and the reason below stays
+        // about the range itself rather than about where the turn ends.
+        { role: "user", content: "继续这一轮。" },
         {
           role: "assistant",
           content: null,
@@ -874,6 +898,9 @@ describe("a fold that cannot settle says why", () => {
       messages: [
         { role: "user", content: filler(4000) },
         { role: "assistant", content: "ok" },
+        // A turn of its own, so the range under test is a whole turn and the reason below stays
+        // about the range itself rather than about where the turn ends.
+        { role: "user", content: "继续这一轮。" },
         {
           role: "assistant",
           content: null,
@@ -958,7 +985,25 @@ describe("what the ledger records for the status report", () => {
 
   test("a refused fold leaves its reason in the turn record", async () => {
     const options = opts();
-    await onRequest(chatHistory({ compress: "m00001–m00001 太短\n只有一点点内容,不到下限,折不了,但这条摘要本身够长以便通过字节下限校验。" }), ctxOf(options));
+    // The whole turn is short, so widening the range to it still lands under the floor.
+    const body = {
+      model: "x",
+      messages: [
+        { role: "user", content: "短。" },
+        { role: "assistant", content: "好" },
+        { role: "user", content: "下一轮。" },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [
+            { id: "c1", type: "function", function: { name: "compress", arguments: JSON.stringify({ content: "m00001–m00001 太短\n只有一点点内容,不到下限,折不了,但这条摘要本身够长以便通过字节下限校验。" }) } },
+          ],
+        },
+        { role: "tool", tool_call_id: "c1", content: `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。` },
+        { role: "user", content: "继续" },
+      ],
+    };
+    await onRequest(body, ctxOf(options));
     const { request } = readState(options);
     expect(request.rejected.join(" ")).toContain("minRangeBytes");
   });
