@@ -122,6 +122,40 @@ else
   say "  ok   folded range removed from the wire"
 fi
 
+# The cap: nobody folds, and one unit is big enough to blow the request on its own. It sits in
+# the turn being sent, so no amount of dropping history could have saved it; only cutting the
+# unit can, and the cut must name an id `decompress` can still resolve.
+"$BUN" /work/request.mjs --big >/tmp/req.json
+mkdir -p "$OUT/cap"
+ACS_SESSION=cap-check "$BUN" /work/post.mjs "http://127.0.0.1:$GW_PORT/v1/chat/completions" "$OUT/cap" >/dev/null 2>&1 || true
+CAPBODY=$(latest_body)
+cp "$CAPBODY" "$OUT/cap-body.json"
+if grep -q '\[acp\] 已省略' "$OUT/cap-body.json"; then
+  say "  ok   an oversized unit was clipped"
+else
+  say "  FAIL an oversized unit went out whole"
+  fail=1
+fi
+if grep -q 'MIDDLE-SENTINEL' "$OUT/cap-body.json"; then
+  say "  FAIL the clip kept the middle of the unit"
+  fail=1
+fi
+CAPID=$(sed -n 's/.*原文 id \([0-9a-f][0-9a-f]*\).*/\1/p' "$OUT/cap-body.json" | sed -n 1p)
+if [ -n "$CAPID" ]; then
+  mkdir -p "$OUT/cap-back"
+  OUT="$OUT/cap-back" "$BUN" /work/mcp.mjs "http://127.0.0.1:$GW_PORT" \
+    magpie-acp-context_decompress "{\"id\":\"$CAPID\"}" >/dev/null 2>&1 || true
+  if grep -q 'MIDDLE-SENTINEL' "$OUT/cap-back/mcp.json"; then
+    say "  ok   the clipped original came back through decompress ($CAPID)"
+  else
+    say "  FAIL decompress could not restore the clipped original ($CAPID)"
+    fail=1
+  fi
+else
+  say "  FAIL the clip marker named no block id"
+  fail=1
+fi
+
 # Session identity: magpie hands the plugin the client's own id as ctx.session, and the
 # ledger file is named after it. This is the path every client with a session header takes;
 # the rest fall back to agent|cwd, so both branches matter for migration.

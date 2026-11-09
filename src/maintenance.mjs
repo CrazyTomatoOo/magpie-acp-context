@@ -97,6 +97,8 @@ export function scanStore(storeDir) {
         evictedAt: f.evictedAt ?? null,
       })),
       turns: Array.isArray(state.turns) ? state.turns : [],
+      clips: Array.isArray(state.clips) ? state.clips : [],
+      clipRefusals: Array.isArray(state.clipRefusals) ? state.clipRefusals : [],
     };
   });
   const blocks = blockFiles(storeDir);
@@ -130,6 +132,7 @@ export function reconcile(storeDir, { apply = false, ttlDays = 0, now = Date.now
     if (!state) continue;
     states.set(key, { path, state });
     for (const fold of state.folds ?? []) for (const id of fold.blocks ?? []) referenced.add(id);
+    for (const clip of state.clips ?? []) if (clip?.id) referenced.add(clip.id);
   }
 
   const present = new Set(blocks.map((b) => b.id));
@@ -140,6 +143,12 @@ export function reconcile(storeDir, { apply = false, ttlDays = 0, now = Date.now
       if (!lost.length || fold.evictedAt) continue;
       report.missingOriginals += 1;
       fold.evictedAt = now;
+      touched = true;
+    }
+    for (const clip of state.clips ?? []) {
+      if (!clip?.id || present.has(clip.id) || clip.evictedAt) continue;
+      report.missingOriginals += 1;
+      clip.evictedAt = now;
       touched = true;
     }
     if (ttlDays > 0) {

@@ -114,6 +114,7 @@ sequenceDiagram
 - **不折媒体**:范围里只要有图片/文件/音频就整段拒绝(anthropic `image`、chat `image_url`、gemini `inlineData`/`fileData`、工具结果里夹带的媒体)。store 只留 `{role,text}`,`decompress` 也只能还回文本,折了之后那张图对模型就永远消失了;媒体同时是 offer 的边界,广告出去的范围从最新那条媒体之后开始(#10)。文本里恰好写着 `[image]` 不算。
 - **按整轮折**:范围两端都落在轮边界上。起点回退到它所在轮的起点——摘要说「这件事做完了」,提出这件事的那句话就必须在摘要里;终点前进到该轮的末,配对结果跟着一起进来。扩到整轮会越出窗口时,把放不下的那一整轮让出去,退到相邻的完整轮,**绝不把一轮切成两半**;连一整轮都装不下就拒绝并说明(#11)。轮末的工具结果可以作终点(`atTurnEnd`),`citable` 只约束起点与非轮末的终点。报价与执行共用 `alignToTurns`,否则广告的范围和能结算的范围会再次分叉。
 - **不折没有摘要的部分**:fold 只由 transcript 里真实出现过的 compress 调用触发;没有调用就没有折叠,插件永不自己生成摘要。
+- **超限就裁,裁之前先存**:建议不是机制——模型可以一整场都不折,而**一个单元**就能把请求撑爆(当前轮里的一条 6MB 工具结果,靠丢历史救不回来)。所以单个单元的文本投影超过 `cap.unitTokens`(默认 32000)时,留头尾各 `cap.keepChars`(默认 2000 字符),中间换成 `[acp] 已省略 N 字符,原文 id <blockId>,可用 decompress 取回`(#18)。标记只写块 id,绝不写成 `[acp] mNNNNN–mNNNNN`:裁不是摘要,读者不能把两者混起来。原文**先**进 store 再裁;写不进去就不裁,并把原因记进 `clipRefusals`——`decompress` 是唯一回来的路。四类单元不裁:媒体、自家记录、已经是 `[acp]` 标记的、带 ref 的(ref 由内容算出,裁了 ref 与原文就对不上;最该裁的工具结果恰好没有 stamp)。这道闸门与窗口无关、逐单元生效,`fallback: "off"` 关掉它。裁是原地替换,不删单元,所以不走 `alignToTurns`。
 - **范围跨出当前历史就不折**:anchor 不在当前历史里 → 丢弃该 fold(openviking 的同类规则,防止 compaction 后预算永久耗尽)。
 - **转义伪造**:被折叠的原文与模型写的摘要都可能包含 `m00007`、`$$…$$`、`📦 [ACP]` 形状的文本;渲染块时必须转义,否则模型可以伪造 ref 边界。
 
@@ -130,6 +131,8 @@ sequenceDiagram
 | `trimPastBarriers` | 判据定义 | 报价起点落在窗口内最新 barrier 之后 |
 | `foldable` | `planFolds` | 已结算覆盖跳过、整轮对齐、字节下限 |
 | apply 检查顺序 | `planFolds` 的 `compressCalls` 循环 | 端点 → 媒体 → 自家记录 → 起点已覆盖 → 整轮对齐 → 覆盖跳过 → 媒体/记录复查 → 窗口 → 下限 → 摘要 |
+| `planClips` / `clipBlocker` | `src/fallback.mjs` | 哪些单元超限可裁、哪些豁免(媒体/自家记录/`[acp]`/带 ref)(#18) |
+| `clipInto` | `src/protocol.mjs`(每个适配器) | 裁在协议里原地落地;拒绝时半字不写 |
 
 新加一类 barrier 或一道闸门时,`test/invariants.test.mjs` 是那个会变红的默认检查:它把每份合成的历史报价出去,原样折一次,断言能结算。
 
@@ -151,6 +154,9 @@ sequenceDiagram
 | `maxSummaryChars` | `20000` | 摘要上限,超出要求模型重写 |
 | `keepRecentTurns` | `3` | 尾部保留的轮数(一轮从 user 消息或应答工具结果的 assistant 消息开始);保护尾会吃掉整段历史时退化为只保当前输入 |
 | `nudge.growthFloor` | `50000` | 唯一的触发口径:自上次折叠后增长到它就催 |
+| `fallback` | `"cap"` | 模型不折时钩子自己做什么:`cap`=只裁超限单元;`full`=再加按窗口丢整轮(#19,未实现前等同 `cap`);`off`=原样放行 |
+| `cap.unitTokens` | `32000` | 单个单元超过它就裁(与窗口无关,当前轮也裁) |
+| `cap.keepChars` | `2000` | 裁后留下的头尾字符数 |
 | `store.dir` | `~/.local/share/magpie-acp` | 与 magpie 配置目录分开 |
 | `store.maxBytes` | `536870912` | 超了按最久未用淘汰 |
 | `store.ttlDays` | `30` | 过期回收 |

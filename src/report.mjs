@@ -85,7 +85,7 @@ export function sessionReport(session, { growthFloor = 50000, turnLimit = 5, fol
   lines.push(
     [
       `· ${session.key}`,
-      `refs=${num(session.refs)} folds=${num(session.folds)} evicted=${num(session.evictedFolds)}`,
+      `refs=${num(session.refs)} folds=${num(session.folds)} clips=${num((session.clips ?? []).length)} evicted=${num(session.evictedFolds)}`,
       `本轮≈${num(request?.tokens ?? 0)} tok,计费 prompt=${num(session.lastUsage?.input ?? 0)} tok`,
       `收到 usage ${num(session.usage)} 次`,
       `nudge=${session.nudge ? `${session.nudge.kind}@${num(session.nudge.tokens ?? 0)} tok` : "无"}`,
@@ -128,6 +128,24 @@ export function sessionReport(session, { growthFloor = 50000, turnLimit = 5, fol
   }
 
   if (request?.rejected?.length) lines.push(`  上次折叠没生效:${request.rejected.join(";")}`);
+  // The cap is the hook's own cut, so it gets its own line: count, bytes it bought back, and
+  // why the newest one happened. A refusal belongs here too - "nothing grew" and "I could not
+  // cut anything" look identical from the outside otherwise.
+  const clipList = Array.isArray(session.clips) ? session.clips : [];
+  if (clipList.length) {
+    const saved = clipList.reduce((n, c) => n + Math.max(0, Number(c.beforeBytes ?? 0) - Number(c.afterBytes ?? 0)), 0);
+    const latest = clipList[clipList.length - 1];
+    const gone = clipList.filter((c) => c.evictedAt).length;
+    lines.push(
+      `  裁剪:${num(clipList.length)} 条,原文省下 ${num(saved)} 字节 · 最近 ${stamp(latest?.at ?? null, now)} ${latest?.reason ?? "?"}` +
+        `(原文 id ${String(latest?.id ?? "").slice(0, 16)})${gone ? ` · ${num(gone)} 条原文已淘汰` : ""}`,
+    );
+  }
+  const clipRefused = Array.isArray(session.clipRefusals) ? session.clipRefusals : [];
+  if (clipRefused.length) {
+    const lastRefusal = clipRefused[clipRefused.length - 1];
+    lines.push(`  上一轮有 ${num(clipRefused.length)} 条超限没裁成:${lastRefusal?.reason ?? "?"}`);
+  }
   if (request?.unrecognized?.length) lines.push(`  认不出的 compress 形状:${request.unrecognized.join(";")}`);
   if (request?.unresolved?.length) lines.push(`  引用了本插件没发过的 ref:${request.unresolved.join("、")}`);
   if (Number(request?.foreign) > 0) lines.push(`  另有 ${num(request.foreign)} 个 compress 调用来自别的压缩器(不算我们的折叠)`);

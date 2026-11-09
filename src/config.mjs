@@ -28,6 +28,15 @@ export const DEFAULTS = {
   // pins the cadence at a flat 50K for every window size, and a hook is never told the
   // model's window, so a percentage here would be a guess.
   nudge: { growthFloor: 50000 },
+  // fallback: the work the hook does to the request itself when nobody folds. `cap` cuts a
+  // single oversized unit (wayfinder #18) and is on by default: a model that never calls
+  // compress must still not be able to produce a request the provider rejects. `off` restores
+  // byte-identical proxying; `full` adds the elision leg (#19) and behaves as `cap` until it
+  // lands. The cap is a token count of one unit's text, not a share of the window: a 6MB tool
+  // result inside the current turn cannot be saved by dropping history, so no window is needed
+  // to know it has to go.
+  fallback: "cap", // cap | full | off
+  cap: { unitTokens: 32000, keepChars: 2000 },
   store: { dir: "~/.local/share/magpie-acp", maxBytes: 536870912, ttlDays: 30 },
   gatewayTimeoutMs: 3000,
   failOpen: true,
@@ -65,6 +74,9 @@ export function loadConfig(options = {}) {
   if (process.env.MAGPIE_ACP_KEEP_TURNS) cfg.keepRecentTurns = Number(process.env.MAGPIE_ACP_KEEP_TURNS);
   if (process.env.MAGPIE_ACP_MIN_BYTES) cfg.minRangeBytes = Number(process.env.MAGPIE_ACP_MIN_BYTES);
   if (process.env.MAGPIE_ACP_GROWTH_FLOOR) cfg.nudge = { ...cfg.nudge, growthFloor: Number(process.env.MAGPIE_ACP_GROWTH_FLOOR) };
+  if (process.env.MAGPIE_ACP_FALLBACK) cfg.fallback = process.env.MAGPIE_ACP_FALLBACK;
+  if (process.env.MAGPIE_ACP_UNIT_CAP) cfg.cap = { ...cfg.cap, unitTokens: Number(process.env.MAGPIE_ACP_UNIT_CAP) };
+  if (process.env.MAGPIE_ACP_CLIP_KEEP) cfg.cap = { ...cfg.cap, keepChars: Number(process.env.MAGPIE_ACP_CLIP_KEEP) };
   if (process.env.MAGPIE_ACP_AGENTS !== undefined) {
     cfg.agents = String(process.env.MAGPIE_ACP_AGENTS)
       .split(",")

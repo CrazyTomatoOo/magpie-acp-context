@@ -113,6 +113,22 @@ function stampInto(slot, refText) {
   return true;
 }
 
+/**
+ * The head/tail cut, in one place so a marker's "已省略 N 字符" is exactly what the two slices
+ * left out. The adapter hands over the payload it found and writes the result back; nothing
+ * else about the unit changes. `marker` is a function because the count it names is only known
+ * once the slices are measured.
+ */
+function clipPayload(text, keepChars, marker) {
+  const head = text.slice(0, keepChars);
+  const tail = text.slice(text.length - keepChars);
+  const omitted = text.length - head.length - tail.length;
+  if (omitted <= 0) return null;
+  return { text: `${head}\n\n${marker(omitted)}\n\n${tail}`, omitted };
+}
+
+const REFUSE = (reason) => ({ ok: false, reason });
+
 /* ------------------------------------------------------------------ anthropic */
 
 const anthropic = {
@@ -139,6 +155,46 @@ const anthropic = {
   },
   stamp(body, index, refText) {
     return stampInto(textSlot(body.messages[index], "content"), refText);
+  },
+  /**
+   * A tool result is a block, not a string: the prose sits in `content[0].content` and the
+   * unit's text projection prefixes it with `tool_result `. Cutting the projection and writing
+   * it back would inject that prefix into the payload, so the cut runs on the payload itself.
+   */
+  clipInto(body, index, { keepChars, marker }) {
+    const m = body.messages?.[index];
+    if (!m) return REFUSE("没有这个单元");
+    if (typeof m.content === "string") {
+      const cut = clipPayload(m.content, keepChars, marker);
+      if (!cut) return REFUSE("正文太短,裁不出可省的部分");
+      m.content = cut.text;
+      return { ok: true, ...cut };
+    }
+    const parts = Array.isArray(m.content) ? m.content : [];
+    if (parts.length === 1) {
+      const block = parts[0];
+      if (block?.type === "tool_result") {
+        if (typeof block.content === "string") {
+          const cut = clipPayload(block.content, keepChars, marker);
+          if (!cut) return REFUSE("工具结果太短,裁不出可省的部分");
+          block.content = cut.text;
+          return { ok: true, ...cut };
+        }
+        if (Array.isArray(block.content) && block.content.length === 1 && typeof block.content[0]?.text === "string") {
+          const cut = clipPayload(block.content[0].text, keepChars, marker);
+          if (!cut) return REFUSE("工具结果太短,裁不出可省的部分");
+          block.content = [{ type: "text", text: cut.text }];
+          return { ok: true, ...cut };
+        }
+      }
+      if (typeof block?.text === "string") {
+        const cut = clipPayload(block.text, keepChars, marker);
+        if (!cut) return REFUSE("正文太短,裁不出可省的部分");
+        block.text = cut.text;
+        return { ok: true, ...cut };
+      }
+    }
+    return REFUSE("这个单元由多个块拼成,裁了会动到结构");
   },
   makeMarker(text) {
     return { role: "user", content: [{ type: "text", text }] };
@@ -189,6 +245,25 @@ const chat = {
   },
   stamp(body, index, refText) {
     return stampInto(textSlot(body.messages[index], "content"), refText);
+  },
+  /** A chat tool message's content is the tool's output verbatim; a prose part is the same cut. */
+  clipInto(body, index, { keepChars, marker }) {
+    const m = body.messages?.[index];
+    if (!m) return REFUSE("没有这个单元");
+    if (typeof m.content === "string") {
+      const cut = clipPayload(m.content, keepChars, marker);
+      if (!cut) return REFUSE("正文太短,裁不出可省的部分");
+      m.content = cut.text;
+      return { ok: true, ...cut };
+    }
+    const parts = Array.isArray(m.content) ? m.content : [];
+    if (parts.length === 1 && typeof parts[0]?.text === "string") {
+      const cut = clipPayload(parts[0].text, keepChars, marker);
+      if (!cut) return REFUSE("正文太短,裁不出可省的部分");
+      parts[0].text = cut.text;
+      return { ok: true, ...cut };
+    }
+    return REFUSE("这个单元由多个块拼成,裁了会动到结构");
   },
   makeMarker(text) {
     return { role: "user", content: text };
@@ -246,6 +321,38 @@ const responses = {
   stamp(body, index, refText) {
     return stampInto(textSlot(body.input[index], "content"), refText);
   },
+  /**
+   * `function_call_output` / `custom_tool_call_output` carry the payload in `output`, and the
+   * projection prefixes it with the item type - so the cut runs on `output`, never on the text.
+   */
+  clipInto(body, index, { keepChars, marker }) {
+    const item = body.input?.[index];
+    if (!item || typeof item !== "object") return REFUSE("没有这个单元");
+    const cutInto = (owner, key) => {
+      const cut = clipPayload(String(owner[key] ?? ""), keepChars, marker);
+      if (!cut) return REFUSE("正文太短,裁不出可省的部分");
+      owner[key] = cut.text;
+      return { ok: true, ...cut };
+    };
+    if (item.type === "function_call_output" || item.type === "custom_tool_call_output") {
+      if (typeof item.output === "string") return cutInto(item, "output");
+      if (Array.isArray(item.output) && item.output.length === 1 && typeof item.output[0]?.text === "string") {
+        const cut = clipPayload(item.output[0].text, keepChars, marker);
+        if (!cut) return REFUSE("工具结果太短,裁不出可省的部分");
+        item.output[0].text = cut.text;
+        return { ok: true, ...cut };
+      }
+      return REFUSE("工具结果的形状不是一个整段文本");
+    }
+    if (typeof item.content === "string") return cutInto(item, "content");
+    if (Array.isArray(item.content) && item.content.length === 1 && typeof item.content[0]?.text === "string") {
+      const cut = clipPayload(item.content[0].text, keepChars, marker);
+      if (!cut) return REFUSE("正文太短,裁不出可省的部分");
+      item.content[0].text = cut.text;
+      return { ok: true, ...cut };
+    }
+    return REFUSE("这个单元由多个块拼成,裁了会动到结构");
+  },
   makeMarker(text) {
     return { type: "message", role: "user", content: [{ type: "input_text", text }] };
   },
@@ -293,6 +400,21 @@ const gemini = {
   },
   stamp(body, index, refText) {
     return stampInto(textSlot(body.contents[index], "parts"), refText);
+  },
+  /**
+   * Gemini carries a tool result as `functionResponse`, whose payload is JSON - there is no
+   * single text run to cut, so the cap steps aside and says so instead of mangling the object.
+   */
+  clipInto(body, index, { keepChars, marker }) {
+    const c = body.contents?.[index];
+    const parts = Array.isArray(c?.parts) ? c.parts : [];
+    if (parts.length === 1 && typeof parts[0]?.text === "string") {
+      const cut = clipPayload(parts[0].text, keepChars, marker);
+      if (!cut) return REFUSE("正文太短,裁不出可省的部分");
+      parts[0].text = cut.text;
+      return { ok: true, ...cut };
+    }
+    return REFUSE("gemini 的工具结果是 JSON,没有可以整段裁的文本");
   },
   makeMarker(text) {
     return { role: "user", parts: [{ text }] };

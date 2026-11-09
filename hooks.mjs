@@ -24,6 +24,7 @@ import { openSession } from "./src/store.mjs";
 import { canCallOwnTools, compressCalls, deviceTarget, MIN_SUMMARY_BYTES, ownToolUnit, unknownShapes } from "./src/compress.mjs";
 import { blockIdOf, formatRef, neutralizeMarkers, sha256, utf8Bytes } from "./src/text.mjs";
 import { decideNudge, nudgeText, NUDGE_NONE } from "./src/nudge.mjs";
+import { clipMarker, planClips } from "./src/fallback.mjs";
 import { estimateBodyTokens, readRefusal, readUsage } from "./src/usage.mjs";
 
 // The one sentence a model reads before its first fold. It names the tool's real argument
@@ -603,11 +604,59 @@ export async function onRequest(body, ctx) {
       return undefined;
     }
 
-    const units = adapter.read(body);
+    let units = adapter.read(body);
     if (units.length === 0) return undefined;
 
-    const ids = unitIds(units);
     const session = openSession(cfg.storeDir, sessionKeyOf(ctx));
+
+    // The cap (wayfinder #18): one unit big enough to sink the request on its own. It runs
+    // before refs are assigned so the ledger numbers the text actually sent, and it stores the
+    // original before it cuts, because `decompress` is the only way back: a cut whose original
+    // failed to store is abandoned rather than made. `fallback: "off"` leaves the request
+    // byte-identical, and every exempt unit (media, own records, markers, ref-bearing prose) is
+    // named in `clipBlocker` rather than checked here.
+    const plan = cfg.fallback === "off" ? { candidates: [], exempt: [] } : planClips({ units, cfg });
+    const clips = [];
+    const clipRefusals = [];
+    let sent = body;
+    for (const candidate of plan.candidates) {
+      const marker = (omitted) => clipMarker({ blockId: candidate.blockId, omitted });
+      const stored = session.withLock(() =>
+        session.storeOriginal(candidate.blockId, { role: candidate.role, text: candidate.text, at: Date.now() }),
+      );
+      if (!stored) {
+        clipRefusals.push({ at: Date.now(), id: candidate.blockId, role: candidate.role, beforeBytes: utf8Bytes(candidate.text), reason: "原文写不进存储,这一条不裁" });
+        continue;
+      }
+      const nextBody = sent === body ? structuredClone(body) : sent;
+      const cut = adapter.clipInto(nextBody, candidate.index, { keepChars: candidate.keepChars, marker });
+      if (!cut.ok) {
+        clipRefusals.push({ at: Date.now(), id: candidate.blockId, role: candidate.role, beforeBytes: utf8Bytes(candidate.text), reason: cut.reason });
+        continue;
+      }
+      sent = nextBody;
+      clips.push({
+        at: Date.now(),
+        id: candidate.blockId,
+        role: candidate.role,
+        beforeBytes: utf8Bytes(candidate.text),
+        afterBytes: utf8Bytes(cut.text),
+        omitted: cut.omitted,
+        reason: "cap",
+      });
+    }
+    // A clip changes the text the pipeline reads, so re-read rather than patching: the projection
+    // rules (a `tool_result ` prefix, a `[image]` placeholder) live in the adapter, and a second
+    // copy of them here would drift the first time a protocol changes.
+    if (clips.length) units = adapter.read(sent);
+    if (clips.length || clipRefusals.length) {
+      session.withLock(() => session.recordClips(clips, clipRefusals));
+      if (cfg.debug && (clips.length || clipRefusals.length)) {
+        console.error(`[magpie-acp-context] cap: ${clips.length} 条裁了${clipRefusals.length ? `,${clipRefusals.length} 条没裁成(${clipRefusals.map((r) => r.reason).join(";")})` : ""}`);
+      }
+    }
+
+    const ids = unitIds(units);
 
     // A ref is the only way a compress range can name a unit, so leaving system/developer
     // prompts unnumbered makes them unfoldable by construction rather than by a check.
@@ -617,7 +666,7 @@ export async function onRequest(body, ctx) {
     for (let i = 0; i < units.length; i += 1) units[i].ref = refs[ids[i]];
 
     const { created, window, foldable, unresolved, foreign, rejected, unrecognized } = planFolds({ units, refs, session, cfg });
-    if (cfg.debug) console.error("[magpie-acp-context] plan", JSON.stringify({ session: sessionKeyOf(ctx), units: units.length, calls: compressCalls(units).length, window, foldable, created: created.length, unresolved, foreign, rejected, unrecognized, folds: session.folds().length }));
+    if (cfg.debug) console.error("[magpie-acp-context] plan", JSON.stringify({ session: sessionKeyOf(ctx), units: units.length, calls: compressCalls(units).length, window, foldable, created: created.length, clips: clips.length, clipRefusals, unresolved, foreign, rejected, unrecognized, folds: session.folds().length }));
     if (created.length) {
       session.withLock(() => session.recordFolds(created, ({ blockId, role, text }) => session.storeOriginal(blockId, { role, text, ref: refs[blockId], at: Date.now() })));
     }
@@ -630,7 +679,7 @@ export async function onRequest(body, ctx) {
     // number the provider actually counted), never smaller than this body's own size,
     // because a retry or a fresh session has no reply behind it yet.
     const lastUsage = session.lastUsage();
-    const bodyTokens = estimateBodyTokens(body);
+    const bodyTokens = estimateBodyTokens(sent);
     const contextTokens = Math.max(bodyTokens, Number(lastUsage?.input) || 0);
 
     const foldedBytes = session.folds().reduce((n, f) => n + (Number(f.bytes) || 0), 0);
@@ -669,7 +718,7 @@ export async function onRequest(body, ctx) {
       protocol: ctx?.protocol,
       model: ctx?.model,
       units: units.length,
-      bytes: utf8Bytes(JSON.stringify(body)),
+      bytes: utf8Bytes(JSON.stringify(sent)),
       tokens: contextTokens,
       billed: Number(lastUsage?.input) || 0,
       folds: session.folds().length,
@@ -682,12 +731,18 @@ export async function onRequest(body, ctx) {
       unresolved: unresolved.slice(0, 3),
       unrecognized: unrecognized.slice(0, 3),
       foreign: foreign.length,
+      // The cap is the hook's own work, so it is reported next to the fold count rather than
+      // mixed into it: "0 folds" and "0 folds, 2 clips" are different answers to "is anything
+      // actually shrinking this session?".
+      clips: clips.length,
+      clipBytes: clips.reduce((n, c) => n + Math.max(0, c.beforeBytes - c.afterBytes), 0),
+      clipRefused: clipRefusals.slice(0, 3),
     });
     session.save();
 
     if (Date.now() - started > cfg.budgetMs) return undefined;
 
-    const next = structuredClone(body);
+    const next = structuredClone(sent);
 
     for (const unit of units) {
       if (!unit.stampable || !unit.ref) continue;

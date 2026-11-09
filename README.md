@@ -214,17 +214,21 @@ check (3 s abort) could not answer — including a published version neither sid
 since a line then would claim "current" about something never compared.
 `updateCheck: false` removes the line, the request, and the read of the cached answer — nothing
 leaves the machine. Then one line per session
-with refs, folds, the growth since the last fold against the 50,000-token nudge line, and the
+with refs, folds, clips, the growth since the last fold against the 50,000-token nudge line, and the
 billed prompt tokens the last reply reported. On disk, `<store.dir>/sessions/` gains one file per
-session and `<store.dir>/blocks/` one file per folded message.
+session and `<store.dir>/blocks/` one file per folded or clipped message.
 
 The nudge is the visible half: once a session has grown 50,000 tokens since its last fold, the
-next request carries a note asking the model to fold — the same cadence billion-context uses, so
-a mixed setup does not fold at two rhythms.
+next request carries a note asking the model to fold. It is advice, and advice is not a mechanism —
+a model that never folds is why the fallback exists: past 32,000 tokens in a single message, the
+hook cuts that message itself, keeps the original on disk, and names its id where the text was.
+The cut never depends on knowing the window, because the message that blows a request is usually
+in the turn being sent.
 
 Options can also come from the environment, which is handy for tests:
 `MAGPIE_ACP_ENABLED=1`, `MAGPIE_ACP_MODE`, `MAGPIE_ACP_STORE`, `MAGPIE_ACP_INJECT_STYLE`,
 `MAGPIE_ACP_KEEP_TURNS`, `MAGPIE_ACP_MIN_BYTES`, `MAGPIE_ACP_GROWTH_FLOOR`, `MAGPIE_ACP_AGENTS`,
+`MAGPIE_ACP_FALLBACK`, `MAGPIE_ACP_UNIT_CAP`, `MAGPIE_ACP_CLIP_KEEP`,
 `MAGPIE_ACP_UPDATE_CHECK` (`1`/`true` on, `0`/`false` off — wins over the option both ways).
 
 `MAGPIE_ACP_DEBUG=1` (or `debug: true`) prints, to the host's stderr, the fold decision of every
@@ -245,7 +249,10 @@ hint never appears.
 | `minRangeBytes` | `5000` | smallest range worth folding |
 | `maxSummaryChars` | `20000` | summaries are truncated, never rejected |
 | `keepRecentTurns` | `3` | trailing turns kept verbatim; a turn starts at a user message or at an assistant message that answers tool output, so an agentic host's tool steps count. When that protection would cover the whole history it degrades to the input being sent, because a window of zero never folds |
-| `nudge.growthFloor` | `50000` | growth (unfolded tail) since the last fold that triggers a nudge — the flat 50K billion-context uses for every window |
+| `nudge.growthFloor` | `50000` | growth (unfolded tail) since the last fold that triggers a nudge |
+| `fallback` | `cap` | what the hook does when nobody folds: `cap` cuts an oversized unit, `full` also drops whole turns once the window is known (`#19`, until then equals `cap`), `off` sends the request untouched |
+| `cap.unitTokens` | `32000` | a single unit larger than this is cut to head + marker + tail, whether or not any window is known — a 6 MB tool result in the current turn cannot be helped by dropping history |
+| `cap.keepChars` | `2000` | characters kept at each end; the marker names the block id, so `decompress <id>` returns the original |
 | `store.dir` | `~/.local/share/magpie-acp` | state + folded originals |
 | `store.maxBytes` / `store.ttlDays` | `536870912` / `30` | eviction budget, applied on `acp_status {evict:true}` |
 | `debug` | `false` | print each request's fold decision, anything the hook swallowed, and why a version check failed, to the host's stderr (`MAGPIE_ACP_DEBUG=1`) |
@@ -323,10 +330,10 @@ facts and the measured run.
 ## Tests
 
 ```sh
-bun test test/                       # 247 tests across 15 files: refs, folds, protocols, safety rules,
+bun test test/                       # 259 tests across 16 files: refs, folds, protocols, safety rules,
                                      # the offer/apply invariant matrix, whole-turn alignment, tools, usage
-                                     # shapes, nudge rules, eviction, compaction, reconcile, CLI, inherited
-                                     # sessions, and the tool-name shapes real wires send back
+                                     # shapes, nudge rules, the cap, eviction, compaction, reconcile, CLI,
+                                     # inherited sessions, and the tool-name shapes real wires send back
 ./test/e2e/run.sh                    # container end-to-end: 6,933 B request → 1,269 B on the wire,
                                      # a nudge on the wire, all four tools over MCP,
                                      # the billed prompt tokens landing in acp_status,

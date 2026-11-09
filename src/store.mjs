@@ -11,7 +11,10 @@ const MAX_USAGE = 200;
  */
 const MAX_TURNS = 20;
 
-const emptySession = () => ({ v: 1, next: 1, refs: {}, folds: [], usage: [], turns: [], nudge: null, refusal: null });
+/** Clips, like folds, are keyed by content: the same tool result re-sent is one record. */
+const MAX_CLIPS = 20;
+
+const emptySession = () => ({ v: 1, next: 1, refs: {}, folds: [], clips: [], clipRefusals: [], usage: [], turns: [], nudge: null, refusal: null });
 
 function paths(dir, key) {
   const root = join(dir, "sessions");
@@ -67,6 +70,8 @@ export function openSession(storeDir, key) {
   const state = existed ? readJson(p.state, emptySession()) : emptySession();
   if (!state.usage) state.usage = [];
   if (!Array.isArray(state.folds)) state.folds = [];
+  if (!Array.isArray(state.clips)) state.clips = [];
+  if (!Array.isArray(state.clipRefusals)) state.clipRefusals = [];
   if (!Array.isArray(state.turns)) state.turns = [];
   const before = existed ? JSON.stringify(state) : null;
   let dirty = false;
@@ -106,6 +111,36 @@ export function openSession(storeDir, key) {
         dirty = true;
         for (const block of fold.blocks || []) putOriginal(block);
       }
+    },
+    /**
+     * A clip is a cut the hook made, not one the model asked for, so it keeps its own ring:
+     * `folds` is the ledger of what the agent handed over, and mixing the two would make every
+     * "did the agent fold?" answer wrong. Keyed by block id, because the same oversized tool
+     * result arrives again on the next request and must not look like a second clip.
+     */
+    recordClips(clips, refusals = []) {
+      const known = new Set(state.clips.map((c) => c.id));
+      let added = 0;
+      for (const clip of clips) {
+        if (!clip?.id || known.has(clip.id)) continue;
+        state.clips.push(clip);
+        known.add(clip.id);
+        added += 1;
+        dirty = true;
+      }
+      if (state.clips.length > MAX_CLIPS) state.clips.splice(0, state.clips.length - MAX_CLIPS);
+      for (const refusal of refusals) {
+        state.clipRefusals.push(refusal);
+        dirty = true;
+      }
+      if (state.clipRefusals.length > MAX_CLIPS) state.clipRefusals.splice(0, state.clipRefusals.length - MAX_CLIPS);
+      return added;
+    },
+    clips() {
+      return state.clips;
+    },
+    clipRefusals() {
+      return state.clipRefusals;
     },
     /**
      * What onResponse saw the provider bill, newest last; the tail is all the nudge reads.
@@ -172,12 +207,22 @@ export function openSession(storeDir, key) {
      * Folded originals live in one global, content-addressed place: `<store>/blocks/<blockId>.json`.
      * Block ids are derived from content, so any session (and any tool run, which has no session
      * of its own) can find an original without knowing which conversation folded it.
+     *
+     * Returns whether the original is on disk afterwards, not whether this call wrote it: a fold
+     * may ignore the answer (the model already said the summary, and a missing original only
+     * costs `decompress`), but a clip may not - `decompress` is its only way back, so a cut whose
+     * original failed to store is abandoned (`hooks.mjs`).
      */
     storeOriginal(blockId, payload) {
       const file = join(storeDir, "blocks", `${blockId}.json`);
-      mkdirSync(join(storeDir, "blocks"), { recursive: true });
-      if (existsSync(file)) return;
-      writeJsonAtomic(file, { ...payload, session: key });
+      try {
+        mkdirSync(join(storeDir, "blocks"), { recursive: true });
+        if (existsSync(file)) return true;
+        writeJsonAtomic(file, { ...payload, session: key });
+      } catch {
+        return false;
+      }
+      return existsSync(file);
     },
     readOriginal(blockId) {
       return readJson(join(storeDir, "blocks", `${blockId}.json`), null);
@@ -203,6 +248,9 @@ export function cleanup(storeDir, { maxBytes = 0, ttlDays = 0, now = Date.now() 
   for (const file of sessionFiles) {
     const state = readJson(join(sessionsDir, file), null);
     for (const fold of state?.folds ?? []) for (const id of fold.blocks ?? []) referenced.add(id);
+    // A clip's original is the only copy left of that text, so it is referenced exactly like a
+    // folded block's: evicting it turns a marker's "可用 decompress 取回" into a lie.
+    for (const clip of state?.clips ?? []) if (clip?.id) referenced.add(clip.id);
   }
 
   const files = readdirSync(blocksDir).filter((f) => f.endsWith(".json"));
@@ -257,6 +305,11 @@ export function cleanup(storeDir, { maxBytes = 0, ttlDays = 0, now = Date.now() 
         fold.evictedAt = now;
         touched = true;
         evictedFolds += 1;
+      }
+      for (const clip of state.clips ?? []) {
+        if (!doomed.has(clip?.id) || clip.evictedAt) continue;
+        clip.evictedAt = now;
+        touched = true;
       }
       if (touched) writeJsonAtomic(path, state);
     }

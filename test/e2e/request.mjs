@@ -36,6 +36,21 @@ const body = {
 };
 
 if (process.argv.includes("--stream")) body.stream = true;
+// The cap fixture: one tool result big enough to blow a request on its own, in the turn being
+// sent (so no fold can help it), with a sentinel in the middle that only the stored original has.
+if (process.argv.includes("--big")) {
+  body.messages = [
+    { role: "system", content: "You are a careful agent." },
+    { role: "user", content: "读一下那个超大文件。" },
+    {
+      role: "assistant",
+      content: "好。",
+      tool_calls: [{ id: "call_big", type: "function", function: { name: "read_file", arguments: '{"path":"huge.log"}' } }],
+    },
+    { role: "tool", tool_call_id: "call_big", content: `${"y".repeat(100000)}MIDDLE-SENTINEL${"y".repeat(100000)}` },
+    { role: "user", content: "继续" },
+  ];
+}
 // The tool gate decides on what the client DECLARES: a body that names tools but none of
 // ours is a client that can never call compress, and one that names ours can.
 if (process.argv.includes("--foreign-tools")) body.tools = [{ type: "function", function: { name: "read_file" } }];
