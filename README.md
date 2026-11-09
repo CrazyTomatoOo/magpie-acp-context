@@ -219,7 +219,10 @@ billed prompt tokens the last reply reported. On disk, `<store.dir>/sessions/` g
 session and `<store.dir>/blocks/` one file per folded or clipped message.
 
 The nudge is the visible half: once a session has grown 50,000 tokens since its last fold, the
-next request carries a note asking the model to fold. It is advice, and advice is not a mechanism —
+next request carries a note asking the model to fold. One note per growth epoch, not one per
+request: the fingerprint is the floor plus the fold count, so further growth does not re-ask and
+only a fold starts a new epoch; and the note is held back at all when the foldable window is too
+small to be worth folding, with the reason recorded. It is advice, and advice is not a mechanism —
 a model that never folds is why the fallback exists: past 32,000 tokens in a single message, the
 hook cuts that message itself, keeps the original on disk, and names its id where the text was.
 The cut never depends on knowing the window, because the message that blows a request is usually
@@ -365,8 +368,9 @@ asserts on the body the fake upstream actually received, not on a CLI success me
 - Only prose can carry a ref; tool results and JSON arguments cannot, so `m00003` may be
   skipped. Refs are display handles, never addresses — folds are keyed by blockId.
 - The nudge has one trigger: growth since the last fold, at the same flat 50K billion-context
-  uses. Percentage-of-window gates were dropped rather than shipped guessed: a hook is never
-  told the model's real window, so a percentage would be a number nobody measured.
+  uses, asked once per growth epoch. Percentage-of-window gates were dropped rather than shipped
+  guessed: a hook is never told the model's real window, so a percentage would be a number nobody
+  measured — which is also why the benefit gate takes 10% of the floor as the window's stand-in.
 - Usage is read from `onResponse`, which the gateway assembles from a bounded copy of the reply;
   verified for both whole-body and streamed replies in the container.
 - Eviction and reconciliation are manual (`acp_status {evict:true}` or the CLI): nothing runs on

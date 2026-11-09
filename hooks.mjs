@@ -23,9 +23,9 @@ import { recordSkip } from "./src/skips.mjs";
 import { openSession } from "./src/store.mjs";
 import { canCallOwnTools, compressCalls, deviceTarget, MIN_SUMMARY_BYTES, ownToolUnit, unknownShapes } from "./src/compress.mjs";
 import { blockIdOf, formatRef, neutralizeMarkers, sha256, utf8Bytes } from "./src/text.mjs";
-import { decideNudge, nudgeText, NUDGE_NONE } from "./src/nudge.mjs";
+import { decideNudge, nudgeText, NUDGE_BELOW_FLOOR, NUDGE_NONE } from "./src/nudge.mjs";
 import { clipMarker, planClips } from "./src/fallback.mjs";
-import { estimateBodyTokens, readRefusal, readUsage } from "./src/usage.mjs";
+import { estimateBodyTokens, estimateTokens, readRefusal, readUsage } from "./src/usage.mjs";
 
 // The one sentence a model reads before its first fold. It names the tool's real argument
 // (`content`, one header line and a summary line) because a model that guesses the shape pays a
@@ -684,6 +684,11 @@ export async function onRequest(body, ctx) {
 
     const foldedBytes = session.folds().reduce((n, f) => n + (Number(f.bytes) || 0), 0);
     const sinceGrowth = Math.max(0, contextTokens - Math.round(foldedBytes / 3.5));
+    // What the advertised window would actually buy back. Asking for a fold that reclaims a
+    // sliver is worse than silence: the model pays for the words and learns the ask is noise.
+    const reclaimable = foldable
+      ? units.slice(foldable.from, foldable.to + 1).reduce((n, unit) => n + estimateTokens(unit.text), 0)
+      : 0;
     // Counted, not clocked: two replies inside the same millisecond must still be two replies.
     const answeredSince = session.state.usage.length > Number(session.nudge()?.usageCount ?? 0);
     const decision = decideNudge({
@@ -692,6 +697,8 @@ export async function onRequest(body, ctx) {
       lastNudge: session.nudge(),
       folds: session.folds().length,
       answeredSince,
+      reclaimable,
+      contextTokens,
     });
     const nudge =
       cfg.mode === "assist" && decision.kind !== NUDGE_NONE && !decision.repeat
@@ -704,6 +711,10 @@ export async function onRequest(body, ctx) {
             cfg,
           )
         : "";
+    if (cfg.debug) {
+      const { kind, reason, since, reclaimable: window, minGain, repeat } = decision;
+      console.error("[magpie-acp-context] nudge", JSON.stringify({ kind, reason: reason ?? null, since, window, minGain, repeat: Boolean(repeat) }));
+    }
     if (nudge) {
       session.setNudge({
         kind: decision.kind,
@@ -737,6 +748,12 @@ export async function onRequest(body, ctx) {
       clips: clips.length,
       clipBytes: clips.reduce((n, c) => n + Math.max(0, c.beforeBytes - c.afterBytes), 0),
       clipRefused: clipRefusals.slice(0, 3),
+      // A held nudge is a decision, not an absence: "nothing grew" and "the window could not
+      // buy anything back" are different findings, and from the outside they look identical.
+      nudgeHeld:
+        decision.kind === NUDGE_NONE && decision.reason !== NUDGE_BELOW_FLOOR
+          ? { reason: decision.reason, reclaimable: Number(decision.reclaimable ?? 0), minGain: Number(decision.minGain ?? 0) }
+          : null,
     });
     session.save();
 

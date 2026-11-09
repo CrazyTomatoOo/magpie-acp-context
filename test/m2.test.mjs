@@ -68,8 +68,8 @@ describe("nudge", () => {
     expect(d.kind).toBe(NUDGE_NONE);
   });
 
-  test("a hint once growth reaches the floor", () => {
-    const d = decideNudge({ cfg, sinceGrowth: 100 });
+  test("a hint once growth reaches the floor, with a window worth folding", () => {
+    const d = decideNudge({ cfg, sinceGrowth: 100, reclaimable: 5000 });
     expect(d.kind).toBe(NUDGE_HINT);
     const text = nudgeText({ ...d, range: "m00001–m00004" });
     expect(text).toContain("增长了 100 tokens");
@@ -77,17 +77,17 @@ describe("nudge", () => {
   });
 
   test("the default floor is the flat 50K billion-context uses", () => {
-    const d = decideNudge({ cfg: cfgOf({}), sinceGrowth: 50000 });
+    const d = decideNudge({ cfg: cfgOf({}), sinceGrowth: 50000, reclaimable: 5000 });
     expect(d.kind).toBe(NUDGE_HINT);
-    expect(decideNudge({ cfg: cfgOf({}), sinceGrowth: 49999 }).kind).toBe(NUDGE_NONE);
+    expect(decideNudge({ cfg: cfgOf({}), sinceGrowth: 49999, reclaimable: 5000 }).kind).toBe(NUDGE_NONE);
   });
 
   test("a retry is suppressed only once the last nudge was answered", () => {
-    const first = decideNudge({ cfg, sinceGrowth: 120 });
+    const first = decideNudge({ cfg, sinceGrowth: 120, reclaimable: 5000 });
     expect(first.repeat).toBe(false);
-    const retry = decideNudge({ cfg, sinceGrowth: 120, lastNudge: first, answeredSince: false });
+    const retry = decideNudge({ cfg, sinceGrowth: 120, lastNudge: first, answeredSince: false, reclaimable: 5000 });
     expect(retry.repeat).toBe(false);
-    const late = decideNudge({ cfg, sinceGrowth: 120, lastNudge: first, answeredSince: true });
+    const late = decideNudge({ cfg, sinceGrowth: 120, lastNudge: first, answeredSince: true, reclaimable: 5000 });
     expect(late.repeat).toBe(true);
   });
 });
@@ -111,14 +111,16 @@ describe("onResponse", () => {
 
   test("the nudge decides on the billed number, not on the estimate", async () => {
     const dir = store();
-    const options = { enabled: true, store: { dir }, nudge: { growthFloor: 100 } };
+    // One turn of slack and no byte floor, so the window this history offers is worth a fold:
+    // with three protected turns and a 5 000-byte floor the nudge would be held back as noise.
+    const options = { enabled: true, store: { dir }, nudge: { growthFloor: 100 }, keepRecentTurns: 1, minRangeBytes: 1 };
     const body = chat(1);
     await onRequest(structuredClone(body), {
       protocol: "chat",
       origin: "local", session: "s2", options });
     expect((await onRequest(structuredClone(body), {
       protocol: "chat",
-      origin: "local", session: "s2", options })).messages.at(-1).content).not.toContain("上下文已用到");
+      origin: "local", session: "s2", options })).messages.at(-1).content).not.toContain("上下文自上次折叠后增长了");
 
     // the provider says this history is 700 tokens: now the same body is over the floor
     await onResponse({ usage: { prompt_tokens: 700, completion_tokens: 3 } }, {
@@ -128,6 +130,7 @@ describe("onResponse", () => {
       protocol: "chat",
       origin: "local", session: "s2", options });
     expect(next.messages.at(-1).content).toContain("增长了 700 tokens");
+    expect(next.messages.at(-1).content).toContain("可折叠范围是 m00001–m00002");
 
     // that nudge was delivered: its reply landed, so the same body again is a repeat
     await onResponse({ usage: { prompt_tokens: 700, completion_tokens: 3 } }, {
@@ -136,7 +139,7 @@ describe("onResponse", () => {
     const again = await onRequest(structuredClone(body), {
       protocol: "chat",
       origin: "local", session: "s2", options });
-    expect(again.messages.at(-1).content).not.toContain("上下文已用到");
+    expect(again.messages.at(-1).content).not.toContain("上下文自上次折叠后增长了");
   });
 });
 

@@ -128,6 +128,14 @@ export function sessionReport(session, { growthFloor = 50000, turnLimit = 5, fol
   }
 
   if (request?.rejected?.length) lines.push(`  上次折叠没生效:${request.rejected.join(";")}`);
+  const held = request?.nudgeHeld;
+  if (held) {
+    const why =
+      held.reason === "no-window"
+        ? "窗口里没有可折的范围(增长的都在保护尾里)"
+        : `可折范围只有 ${num(held.reclaimable)} tok,不到门槛 ${num(held.minGain)} tok`;
+    lines.push(`  提醒被压下:${why};阶段变了或折叠之后会再提醒。`);
+  }
   // The cap is the hook's own cut, so it gets its own line: count, bytes it bought back, and
   // why the newest one happened. A refusal belongs here too - "nothing grew" and "I could not
   // cut anything" look identical from the outside otherwise.
@@ -263,6 +271,8 @@ export function reportData({ storeDir, sessions, blocks, bytes, skips = [] }, { 
         })),
         turns: s.turns ?? [],
         nudge: s.nudge ?? null,
+        // A nudge that was held back: the reason and the two numbers it was weighed against.
+        nudgeHeld: s.request?.nudgeHeld ?? null,
         refusal: s.refusal ?? null,
         lastFoldRejections: s.request?.rejected ?? [],
         unrecognized: s.request?.unrecognized ?? [],

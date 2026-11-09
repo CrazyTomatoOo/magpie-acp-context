@@ -153,7 +153,7 @@ sequenceDiagram
 | `minRangeBytes` | `5000` | 小于它的范围不接受 compress |
 | `maxSummaryChars` | `20000` | 摘要上限,超出要求模型重写 |
 | `keepRecentTurns` | `3` | 尾部保留的轮数(一轮从 user 消息或应答工具结果的 assistant 消息开始);保护尾会吃掉整段历史时退化为只保当前输入 |
-| `nudge.growthFloor` | `50000` | 唯一的触发口径:自上次折叠后增长到它就催 |
+| `nudge.growthFloor` | `50000` | 触发口径:自上次折叠后增长到它就催(一个增长段只催一次,见 §17.2) |
 | `fallback` | `"cap"` | 模型不折时钩子自己做什么:`cap`=只裁超限单元;`full`=再加按窗口丢整轮(#19,未实现前等同 `cap`);`off`=原样放行 |
 | `cap.unitTokens` | `32000` | 单个单元超过它就裁(与窗口无关,当前轮也裁) |
 | `cap.keepChars` | `2000` | 裁后留下的头尾字符数 |
@@ -604,15 +604,25 @@ magpie 自己记下的清单(`plugin-tools.json`):
 
 我们没有可信的窗口大小:hook 拿不到模型上下文窗口。所以触发口径里没有百分比——按窗口算比例等于拿一个没人测量过的数当门闸。只留一条:自上次折叠后增长到 `nudge.growthFloor`(默认 50000)就催,与 billion-context 的 flat 50K 节奏一致。
 
+但「超过阈值」不等于「每轮都催」。容器里量到的实况是:越过阈值之后,**每个请求都带着提醒,二十轮零次折叠**——fingerprint 里带 `round(sinceGrowth/500)`,增长每 500 tokens 就换一次,去重永远不成立。所以口径改成两层:一个增长段只催一次(折叠之后才开新的一段),而且只有窗口里真能折出 `nudgeMinGain` 的量时才催。提醒本身不进 body 的折叠、标记与结算字节(`test/nudge-epoch.test.mjs` 逐字节比对过),它只决定「说不说」。
+
 ### 17.2 判定规则
 
 ```
 contextTokens = max(estimateBodyTokens(body), 最近一次 onResponse 的 input)
 sinceGrowth   = max(0, contextTokens - 已折叠字节/3.5)
-growthFloor   = max(1, nudge.growthFloor)   // 默认 50000
-kind          = sinceGrowth >= growthFloor ? hint : none
-fingerprint   = "<kind>:<growthFloor>:<round(sinceGrowth/500)>:<folds>"
+growthFloor   = max(1, nudge.growthFloor)          // 默认 50000
+reclaimable   = 可折叠窗口里各单元 estimateTokens 之和
+minGain       = max(1, round(growthFloor × 0.1), round(contextTokens × 0.01))
+kind          = sinceGrowth < growthFloor        ? none(低于提醒线)
+              : reclaimable < minGain            ? none(窗口没有可折的范围 / 太小)
+              :                                    hint
+fingerprint   = "<kind>:<growthFloor>:<folds>"     // 增长不是指纹的一部分
 ```
+
+两层判定各管一件事:
+- **增长段(epoch)= `nudge.growthFloor` + `folds`**:指纹里没有 `sinceGrowth`,所以 500 tokens 的继续增长不换指纹,不再提醒;只有真折了一次(`folds` 变了、或指纹本身没变过)才开新的一段,一段只催一次。
+- **最小收益门闸 `nudgeMinGain`**:越过提醒线之后,窗口里至少要能折出 `max(1, 提醒线×0.1, 上下文×0.01)` 个 token,否则这声提醒没有可执行的动作。不动手时把理由落到账本(`request.nudgeHeld = {reason, reclaimable, minGain}`,`reason` 是 `no-window` 或 `small-window`),`acp_status` 打一行「提醒被压下:…」。billion-context 用 `max(5000, 窗口×0.01)` 同一个口径;它知道窗口,我们不知道,于是用提醒线的十分之一顶替——默认 50000 时正好也是 5000,而 canary 把提醒线调小时它跟着缩放。
 
 - `sinceGrowth = contextTokens - round(已折叠字节 / 3.5)`:折叠掉的量不算增长,所以一个不停折叠的会话,增长始终等于「未折叠尾部」的大小。
 - 去重只在**同一次输入**上生效:`fingerprint` 相同**且**上次 nudge 之后收到过 usage 才抑制。理由:重试的那一次可能正是模型真正看到的那一次;只有回复落地才证明它被送达到了。
