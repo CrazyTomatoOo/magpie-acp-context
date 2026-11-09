@@ -89,7 +89,9 @@ describe("the offer and the apply share one judgment about where a fold may star
   });
 
   test("the advertised range, folded verbatim, settles", () => {
-    const probe = history();
+    // The probe's call settles nothing (its end precedes its start), so the offer is the one a
+    // fresh request would carry: the offer is built after settlement.
+    const probe = history({ compressRange: "m00003–m00002" });
     const offered = refs(probe, plan(probe));
     const out = plan(history({ compressRange: offered }));
     expect(out.rejected).toEqual([]);
@@ -98,7 +100,7 @@ describe("the offer and the apply share one judgment about where a fold may star
   });
 
   test("negative control: a window already starting on a citable unit is unchanged", () => {
-    const units = plainHistory();
+    const units = plainHistory({ compressRange: "m00003–m00002" });
     const out = plan(units);
     expect(out.foldable.from).toBe(0);
     const offered = refs(units, out);

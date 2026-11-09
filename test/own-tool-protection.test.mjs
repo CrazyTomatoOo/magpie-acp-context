@@ -62,7 +62,10 @@ describe("the plugin's own tool records are never folded away (#9)", () => {
   });
 
   test("the offered window starts after the newest record, so the offer can settle", () => {
-    const units = history({ compressRange: "m00004–m00005" });
+    // A call that settles nothing keeps the request's shape while leaving the offer exactly as a
+    // fresh request would see it: the offer is built after settlement, so a settling call would
+    // have to point past the span it just folded.
+    const units = history({ compressRange: "m00004–m00003" });
     const withRecord = plan(units);
     // Index 2 is the record's reply - a tool result, which apply refuses as an endpoint. Moving
     // past the record means moving past the pair, to the first citable unit after it (#16).
@@ -70,7 +73,7 @@ describe("the plugin's own tool records are never folded away (#9)", () => {
     expect(units[withRecord.foldable.from].role).not.toBe("tool");
     expect(withRecord.foldable).not.toBeNull();
 
-    const without = history({ compressRange: "m00004–m00005" }).filter((u) => u.index !== 1 && u.index !== 2).map((u, i) => ({ ...u, index: i }));
+    const without = history({ compressRange: "m00004–m00003" }).filter((u) => u.index !== 1 && u.index !== 2).map((u, i) => ({ ...u, index: i }));
     const bare = plan(without);
     expect(bare.foldable.from).toBe(0);
   });

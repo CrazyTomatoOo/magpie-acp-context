@@ -129,12 +129,12 @@ sequenceDiagram
 | `pairSafe` | 判据定义 | 调用与结果不被切开 |
 | `barriers` / `media` | `planFolds` | 自家工具记录、媒体:范围不得跨越 |
 | `trimPastBarriers` | 判据定义 | 报价起点落在窗口内最新 barrier 之后 |
-| `foldable` | `planFolds` | 已结算覆盖跳过、整轮对齐、字节下限 |
+| `foldable` | `planFolds` | 已结算覆盖跳过、整轮对齐、字节下限;**在结算循环之后才算**,本轮刚折掉的跨度不会被再报一次 |
 | apply 检查顺序 | `planFolds` 的 `compressCalls` 循环 | 端点 → 媒体 → 自家记录 → 起点已覆盖 → 整轮对齐 → 覆盖跳过 → 媒体/记录复查 → 窗口 → 下限 → 摘要 |
 | `planClips` / `clipBlocker` | `src/fallback.mjs` | 哪些单元超限可裁、哪些豁免(媒体/自家记录/`[acp]`/带 ref)(#18) |
 | `clipInto` | `src/protocol.mjs`(每个适配器) | 裁在协议里原地落地;拒绝时半字不写 |
 
-新加一类 barrier 或一道闸门时,`test/invariants.test.mjs` 是那个会变红的默认检查:它把每份合成的历史报价出去,原样折一次,断言能结算。
+新加一类 barrier 或一道闸门时,`test/invariants.test.mjs` 是那个会变红的默认检查:它把每份合成的历史报价出去,原样折一次,断言能结算。报价侧还有一条同源的检查:广告出去的起点不能落进已经结算的折叠里 —— 包括**本轮自己刚结算的那一个**;漏掉这条时,线上会出现「wire 上是 `[acp] m00001–m00016`,note 却让人折 `m00001–m00018`」,模型照做就折出嵌套摘要,`liveRanges` 再按重叠丢掉里面那一份,工作是白做的。
 
 ---
 

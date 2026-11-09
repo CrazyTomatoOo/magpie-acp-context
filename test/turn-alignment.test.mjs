@@ -75,9 +75,11 @@ describe("a fold range is widened to whole turns (#11)", () => {
 
 describe("the offer is already turn-aligned, so an advertised range settles as offered", () => {
   test("the advertised start is a turn start and the advertised end a turn end", () => {
-    const out = plan("m00001–m00001");
+    // A range that settles nothing, so the offer is the one the request would have carried before
+    // any fold of its own: the offer is built after settlement.
+    const out = plan("m00003–m00002");
     expect(out.foldable).not.toBeNull();
     expect(out.foldable.from).toBe(0);
-    expect(`${history("m00001–m00001")[out.foldable.to].ref}`).toBe("m00005");
+    expect(`${history("m00003–m00002")[out.foldable.to].ref}`).toBe("m00005");
   });
 });

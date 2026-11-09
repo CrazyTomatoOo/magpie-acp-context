@@ -39,9 +39,9 @@ function build(rows, range = "m00001–m00001", padText = filler(12)) {
   return raw.map((u, index) => ({ ...u, index, blockId: `b${index}`, ref: `m${String(index + 1).padStart(5, "0")}` }));
 }
 
-function plan(units) {
+function plan(units, folds = []) {
   const refs = Object.fromEntries(units.map((u) => [u.blockId, u.ref]));
-  return planFolds({ units, refs, session: { folds: () => [] }, cfg: { keepRecentTurns: 1, minRangeBytes: 40, maxSummaryChars: 20000 } });
+  return planFolds({ units, refs, session: { folds: () => folds }, cfg: { keepRecentTurns: 1, minRangeBytes: 40, maxSummaryChars: 20000 } });
 }
 
 const ownRecord = () => [
@@ -103,5 +103,34 @@ describe("a window under the fold floor advertises nothing at all", () => {
   test("short history, no offer rather than an offer that cannot settle", () => {
     const out = plan(build([unit("user", SHORT)], "m00001–m00001", SHORT));
     expect(out.foldable).toBeNull();
+  });
+});
+
+/**
+ * The offer is built after settlement. Before that, the request that folded a span still
+ * advertised that span as the place to fold — the wire carried `[acp] m00001–m00016` and the note
+ * asked for `m00001–m00018`. A model that obeyed produced a nested summary, and `liveRanges`
+ * drops the inner one as an overlap: the work is lost.
+ */
+describe("the offer never points at a span that is already folded", () => {
+  const rows = () => [unit("user", filler(20)), unit("user", filler(10)), unit("assistant", filler(10)), unit("user", filler(6))];
+  const foldedInSamePass = () => {
+    const units = build(rows(), "m00001–m00002");
+    const out = plan(units);
+    expect(out.created).toHaveLength(1);
+    return { units, out };
+  };
+
+  test("a span folded by this very request is not offered back", () => {
+    const { units, out } = foldedInSamePass();
+    const foldEnd = units.findIndex((u) => u.blockId === out.created[0].endBlock);
+    expect(out.foldable).not.toBeNull();
+    expect(out.foldable.from).toBeGreaterThan(foldEnd);
+  });
+
+  test("the offer matches the one the next request carries", () => {
+    const { units, out } = foldedInSamePass();
+    const next = plan(units, out.created);
+    expect(next.foldable).toEqual(out.foldable);
   });
 });

@@ -337,18 +337,24 @@ export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
   // pays for (measured 2026-11-07: a rejected 28-byte call kept re-announcing itself long after
   // the range had been folded successfully).
   const settled = session.folds();
+  // Coverage is read live, because a call can settle a fold earlier in this very pass and both the
+  // remaining calls and the offer this request ends with must see it. Read from the pre-existing
+  // folds only, the request that folded a span still advertised that span as the place to fold
+  // (measured in the container: the wire carried the marker for m00001–m00016 while the note asked
+  // for m00001–m00018), which is exactly the nested-summary trap described below.
+  const seen = settled.slice();
   const settledEnd = settled.length ? idToIndex.get(settled[settled.length - 1].endRef) : undefined;
   // A range that a settled fold already covers needs nothing more: re-folding it with a second
   // summary would replace the same span twice, and re-reporting its refusal is noise. Ranges can
   // leave this window (the client truncates), so coverage is matched against the folds we own.
   const coveredBySettled = (startIndex, endIndex) =>
-    settled.some((fold) => {
+    seen.some((fold) => {
       const a = idToIndex.get(fold.startRef);
       const b = idToIndex.get(fold.endRef);
       return a !== undefined && b !== undefined && startIndex >= a && endIndex <= b;
     });
   const coveringFoldOf = (index) =>
-    settled.find((fold) => {
+    seen.find((fold) => {
       const a = idToIndex.get(fold.startRef);
       const b = idToIndex.get(fold.endRef);
       return a !== undefined && b !== undefined && index >= a && index <= b;
@@ -367,25 +373,6 @@ export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
     }
     return to + 1;
   };
-  // A window whose whole span sits under the fold floor is not an offer, it is a trap: measured
-  // 2026-11-07 on the claude lane, the note advertised a 3,410-byte single-unit window, the model
-  // folded exactly that and got a size refusal, widened the range, and hit the window refusal —
-  // two calls spent on a range nothing could ever settle. The floor and the span both start at
-  // the first citable unit: skipping a settled fold can land on the tool result that answered a
-  // call inside it, and that unit is no more foldable than the record it follows (#16).
-  const foldable = window
-    ? (() => {
-        const from0 = citableStart(units, firstUncoveredFrom(window.from, window.to), window.to);
-        if (from0 > window.to) return null;
-        const aligned = alignToTurns(units, from0, window.to, window.from, windowEnd, turns);
-        if (!aligned) return null;
-        const from = citableStart(units, Math.max(aligned.start, window.from), aligned.end);
-        if (from > aligned.end) return null;
-        const spanBytes = units.slice(from, aligned.end + 1).reduce((n, u) => n + utf8Bytes(u.text), 0);
-        if (spanBytes < Number(cfg.minRangeBytes)) return null;
-        return { from, to: aligned.end };
-      })()
-    : null;
   for (const call of compressCalls(units)) {
     if (settledEnd !== undefined && call.unitIndex < settledEnd) continue;
     if (call.unreadable) {
@@ -509,8 +496,31 @@ export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
         bytes,
         blocks: inRange.map((u) => ({ blockId: u.blockId, ref: refs[u.blockId], role: u.role, text: neutralizeMarkers(u.text) })),
       });
+      seen.push(created[created.length - 1]);
     }
   }
+  // The offer is built after settlement, never before it: what this request just folded is not a
+  // place to fold, and the note is read by the model in the same breath as the marker.
+  //
+  // A window whose whole span sits under the fold floor is not an offer, it is a trap: measured
+  // 2026-11-07 on the claude lane, the note advertised a 3,410-byte single-unit window, the model
+  // folded exactly that and got a size refusal, widened the range, and hit the window refusal —
+  // two calls spent on a range nothing could ever settle. The floor and the span both start at
+  // the first citable unit: skipping a settled fold can land on the tool result that answered a
+  // call inside it, and that unit is no more foldable than the record it follows (#16).
+  const foldable = window
+    ? (() => {
+        const from0 = citableStart(units, firstUncoveredFrom(window.from, window.to), window.to);
+        if (from0 > window.to) return null;
+        const aligned = alignToTurns(units, from0, window.to, window.from, windowEnd, turns);
+        if (!aligned) return null;
+        const from = citableStart(units, Math.max(aligned.start, window.from), aligned.end);
+        if (from > aligned.end) return null;
+        const spanBytes = units.slice(from, aligned.end + 1).reduce((n, u) => n + utf8Bytes(u.text), 0);
+        if (spanBytes < Number(cfg.minRangeBytes)) return null;
+        return { from, to: aligned.end };
+      })()
+    : null;
   const unrecognized = unknownShapes(units, compressCalls(units));
   return { created, window, foldable, unresolved: [...new Set(unresolved)], foreign: [...new Set(foreign)], rejected: [...new Set(rejected)], unrecognized: [...new Set(unrecognized)] };
 }

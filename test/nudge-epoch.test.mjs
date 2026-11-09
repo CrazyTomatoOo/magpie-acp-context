@@ -126,12 +126,16 @@ describe("the epoch: growth moves the numbers, only a fold moves the alarm", () 
     );
     const folded = await onRequest(structuredClone(body1), ctx);
     expect(stateOf(options).folds.length).toBe(1);
-    // The fold itself starts the new epoch: this is the one alert it buys.
-    expect(noteOf(folded)).toContain(NUDGE_SENTENCE);
-    expect(stateOf(options).nudge.fingerprint).toBe(`hint:${FLOOR}:1`);
+    // The fold ends the foldable history: what is left is a couple of units, well under the gate,
+    // and the offer is built after settlement so it cannot point back at the span just folded.
+    // This request is held, not asked — the reason is recorded.
+    expect(noteOf(folded)).not.toContain(NUDGE_SENTENCE);
+    expect(stateOf(options).request.nudgeHeld?.reason).toBe(NUDGE_SMALL_WINDOW);
+    expect(stateOf(options).nudge.fingerprint).toBe(`hint:${FLOOR}:0`);
 
     // The conversation continues and the context grows again by 18 000 tokens. Under the old
-    // fingerprint every one of those steps re-alarmed; here the epoch holds, so nothing is asked.
+    // fingerprint every one of those steps re-alarmed; here the fold started a new epoch and this
+    // is the single alert it buys.
     await onResponse({ usage: { prompt_tokens: 20000, completion_tokens: 2 } }, ctx);
     const body2 = structuredClone(body1);
     body2.messages.push(
@@ -140,7 +144,7 @@ describe("the epoch: growth moves the numbers, only a fold moves the alarm", () 
       { role: "user", content: "继续" },
     );
     const afterFold = await onRequest(structuredClone(body2), ctx);
-    expect(noteOf(afterFold)).not.toContain(NUDGE_SENTENCE);
+    expect(noteOf(afterFold)).toContain(NUDGE_SENTENCE);
     expect(stateOf(options).nudge.fingerprint).toBe(`hint:${FLOOR}:1`);
 
     // And still silent after the answer: one alert per epoch, not one per request.
