@@ -388,7 +388,7 @@ facts and the measured run.
 Newest first. `git tag -l 'v*'` lists the earlier releases; `magpie-plugin` always points at the
 newest of them.
 
-**Unreleased** — the second leg of the fallback, which needs a number the hook can trust:
+**0.5.0** — the second leg of the fallback, and a heavier floor where the model meets its own summary:
 
 - with `fallback: "full"` and a known ceiling (a `N tokens` refusal, else `contextLimit`, else the
   highest `usage.input` seen), a request at 95% of it drops its oldest whole turns until it is back
@@ -400,7 +400,11 @@ newest of them.
   new session — once per stretch;
 - media, the plugin's own records and existing `[acp]` statements end the sweep instead of being
   crossed, and an original that cannot reach the store is not dropped;
-- the per-unit cut drops to 2,000 tokens while the request is over the line.
+- the per-unit cut drops to 2,000 tokens while the request is over the line;
+- a range that is more than half summary gets a doubled summary floor (80 bytes, not 40) and a
+  note that asks for the cross-range thread plus a topic list — whether the rest of the range is
+  prose or more summaries; only fold blocks count, so an elision statement, a clip marker or tool
+  traffic never raises it.
 
 **0.4.0** — the safety boundary closes, and none of it depends on the model cooperating:
 

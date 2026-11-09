@@ -19,6 +19,23 @@ probe() {
   "$BUN" -e "fetch(process.argv[1]).then(()=>process.exit(0),()=>process.exit(1))" "$1" 2>/dev/null
 }
 
+# gates <phases>: the live proof for one group of phases, against the gateway as it is running
+# now. The log IS the failure message: a phase that did not fire prints its own FAIL line, and
+# the lane must not carry on past it.
+gates() {
+  local phases="$1" log
+  log="$OUT/gates-${1//,/-}.log"
+  if GW="http://127.0.0.1:$GW_PORT" MODEL=fake/fake-1 SESSION=live-gates OUT="$OUT" \
+    CAPTURE="$OUT/capture" PHASES="$phases" "$BUN" /live/gates.mjs >"$log" 2>&1; then
+    sed 's/^/[e2e] /' "$log"
+    say "  ok   live gates fired: $phases"
+  else
+    sed 's/^/[e2e] /' "$log"
+    say "FAIL a live gate phase did not fire: $phases (log: $log)"
+    exit 1
+  fi
+}
+
 "$BUN" /host/upstream.mjs >"$OUT/upstream.log" 2>&1 &
 i=0
 until probe "http://127.0.0.1:$UPSTREAM_PORT/"; do
@@ -122,40 +139,6 @@ else
   say "  ok   folded range removed from the wire"
 fi
 
-# The cap: nobody folds, and one unit is big enough to blow the request on its own. It sits in
-# the turn being sent, so no amount of dropping history could have saved it; only cutting the
-# unit can, and the cut must name an id `decompress` can still resolve.
-"$BUN" /work/request.mjs --big >/tmp/req.json
-mkdir -p "$OUT/cap"
-ACS_SESSION=cap-check "$BUN" /work/post.mjs "http://127.0.0.1:$GW_PORT/v1/chat/completions" "$OUT/cap" >/dev/null 2>&1 || true
-CAPBODY=$(latest_body)
-cp "$CAPBODY" "$OUT/cap-body.json"
-if grep -q '\[acp\] 已省略' "$OUT/cap-body.json"; then
-  say "  ok   an oversized unit was clipped"
-else
-  say "  FAIL an oversized unit went out whole"
-  fail=1
-fi
-if grep -q 'MIDDLE-SENTINEL' "$OUT/cap-body.json"; then
-  say "  FAIL the clip kept the middle of the unit"
-  fail=1
-fi
-CAPID=$(sed -n 's/.*原文 id \([0-9a-f][0-9a-f]*\).*/\1/p' "$OUT/cap-body.json" | sed -n 1p)
-if [ -n "$CAPID" ]; then
-  mkdir -p "$OUT/cap-back"
-  OUT="$OUT/cap-back" "$BUN" /work/mcp.mjs "http://127.0.0.1:$GW_PORT" \
-    magpie-acp-context_decompress "{\"id\":\"$CAPID\"}" >/dev/null 2>&1 || true
-  if grep -q 'MIDDLE-SENTINEL' "$OUT/cap-back/mcp.json"; then
-    say "  ok   the clipped original came back through decompress ($CAPID)"
-  else
-    say "  FAIL decompress could not restore the clipped original ($CAPID)"
-    fail=1
-  fi
-else
-  say "  FAIL the clip marker named no block id"
-  fail=1
-fi
-
 # Session identity: magpie hands the plugin the client's own id as ctx.session, and the
 # ledger file is named after it. This is the path every client with a session header takes;
 # the rest fall back to agent|cwd, so both branches matter for migration.
@@ -209,8 +192,6 @@ sed 's/^/[e2e] /' "$OUT/mcp-after-restart.log"
 grep -q '填充文本' "$OUT/restart/mcp.json" || { say "FAIL restart lost the original"; exit 1; }
 say "survived a restart"
 # M2: the reply's own usage reaches the ledger, and acp_status reports it.
-grep -q '上下文自上次折叠后增长了' "$OUT/capture/"*.body || { say "FAIL no nudge reached the provider"; exit 1; }
-say "nudge reached the provider"
 # The version line must come from the store's cache, never the network: the container has no
 # route out at all, so a line that appears at all proves it rendered from <store>/version-check.json
 # — the product's own cache path, seeded the way a recent successful check would have left it.
@@ -243,19 +224,16 @@ OUT="$OUT/stream" "$BUN" /work/mcp.mjs "http://127.0.0.1:$GW_PORT" magpie-acp-co
 grep -q '计费 prompt=2,222 tok' "$OUT/stream/mcp.json" || { say "FAIL streamed usage never reached the ledger"; sed 's/^/    /' "$OUT/stream.log"; exit 1; }
 say "streamed usage recorded"
 
-# The four-gate live proof (#15): one good range folds, three bad ranges are refused with
-# their reasons, and acp_status shows all four. Every range is derived from the window the
-# hook advertises, so this holds under this lane's KEEP_TURNS=1 as well as the shipped 3 -
-# a hard-coded range would only be true for one of them.
-GW="http://127.0.0.1:$GW_PORT" MODEL=fake/fake-1 SESSION=live-gates OUT="$OUT" \
-  "$BUN" /live/gates.mjs >"$OUT/gates.log" 2>&1 || true
-sed 's/^/[e2e] /' "$OUT/gates.log"
-grep -q 'OK - one fold, three refusals, all four in acp_status' "$OUT/gates.log" || { say "FAIL the four-gate live proof"; exit 1; }
-say "four gates fired live"
+# The live proof (#15, #22, #24): the three refused ranges and the one good fold, the cap cutting
+# one oversized unit, and the doubled floor where the model meets it. Every range is derived from
+# the window the hook advertises, so this holds under this lane's KEEP_TURNS=1 as well as the
+# shipped 3 - a hard-coded range would only be true for one of them.
+gates default,cap,condensed
 
-# The elision leg (#19): a request over a KNOWN limit that nobody folded has its earliest whole
-# turns swapped for a mechanical statement — and every ref the statement names comes back through
-# `decompress`. The limit is an env value, so the gateway is restarted to pick it up.
+# The elision leg (#19, #23): a request over a KNOWN limit that nobody folded has its earliest
+# whole turns swapped for a mechanical statement, a real fold clears the latch, and the count
+# starts over. The limit is an env value, so the gateway is restarted to pick it up - the phase
+# is meaningless without `fallback: full` and a declared ceiling.
 say "restarting with a known window"
 pkill -f 'magpie web --gateway' || true
 i=0
@@ -269,40 +247,17 @@ until probe "http://127.0.0.1:$GW_PORT/"; do
   i=$((i + 1)); [ "$i" -gt 240 ] && { say "FAIL gateway did not come back with the window"; exit 1; }
   sleep 0.25
 done
-"$BUN" /work/request.mjs --over >/tmp/req.json
-mkdir -p "$OUT/elide"
-ACS_SESSION=elide-check "$BUN" /work/post.mjs "http://127.0.0.1:$GW_PORT/v1/chat/completions" "$OUT/elide" >/dev/null 2>&1 || true
-cp "$(latest_body)" "$OUT/elide-body.json"
-if grep -qE '\[acp\] 已省略 m[0-9]+–m[0-9]+ 共 [0-9]+ 条\(机械省略,没有摘要' "$OUT/elide-body.json"; then
-  say "  ok   the earliest turns were replaced by a mechanical statement"
-else
-  say "  FAIL the earliest turns went out whole"
-  fail=1
-fi
-if grep -q '早期需求-1:uuuu' "$OUT/elide-body.json"; then
-  say "  FAIL the earliest turn was still on the wire"
-  fail=1
-else
-  say "  ok   the earliest turn left the wire"
-fi
-ELIDEFROM=$(sed -n 's/.*已省略 \(m[0-9]*\)–m[0-9]* 共 .*/\1/p' "$OUT/elide-body.json" | sed -n 1p)
-ELIDETO=$(sed -n 's/.*已省略 m[0-9]*–\(m[0-9]*\) 共 .*/\1/p' "$OUT/elide-body.json" | sed -n 1p)
-if [ -n "$ELIDEFROM" ] && [ "$ELIDEFROM" != "$ELIDETO" ]; then
-  say "  ok   the statement names a range in history order ($ELIDEFROM–$ELIDETO)"
-else
-  say "  FAIL the statement named no range in history order ($ELIDEFROM–$ELIDETO)"
-  fail=1
-fi
-mkdir -p "$OUT/elide-back"
-OUT="$OUT/elide-back" "$BUN" /work/mcp.mjs "http://127.0.0.1:$GW_PORT" \
-  magpie-acp-context_decompress "{\"id\":\"$ELIDEFROM\"}" >/dev/null 2>&1 || true
-if grep -q '早期需求-1:uuuu' "$OUT/elide-back/mcp.json"; then
-  say "  ok   the elided original came back through decompress ($ELIDEFROM)"
-else
-  say "  FAIL decompress could not restore the elided original ($ELIDEFROM)"
-  fail=1
-fi
-[ "$fail" -eq 0 ] || { say "FAIL elision assertions"; exit 1; }
-say "elision fired on a known window"
+
+# The same legs through the gate script (#22, #23): their own histories, their own sessions, the
+# statement asserted on the bytes the provider received, the latch holding across an identical
+# request, a real fold clearing it, and the count starting over.
+gates elide,latch-cleared
+
+# The nudge is a reminder, not a gate (#25): it stays here, and it is grepped across every body
+# the provider received because the request that shows it depends on the history shape. It needs
+# a foldable window big enough to clear the percentage of the context, which the elision phases
+# have and a short conversation does not.
+grep -q '上下文自上次折叠后增长了' "$OUT/capture/"*.body || { say "FAIL no nudge reached the provider"; exit 1; }
+say "nudge reached the provider"
 
 say "OK"
