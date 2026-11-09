@@ -229,10 +229,12 @@ const chat = {
     const items = body.messages || [];
     return items.map((m, index) => {
       const calls = Array.isArray(m?.tool_calls) ? m.tool_calls : [];
-      const text =
-        partsText(m?.content) +
-        calls.map((c) => `tool_call ${c?.function?.name ?? ""} ${asText(c?.function?.arguments)}`).join("");
-      const stampable = (m?.role === "user" || m?.role === "assistant") && text.trim() !== "" && textSlot(m, "content") !== null;
+      const prose = partsText(m?.content);
+      const text = prose + calls.map((c) => `tool_call ${c?.function?.name ?? ""} ${asText(c?.function?.arguments)}`).join("");
+      // A message whose only substance is a tool call is tool traffic, not a turn of history -
+      // the same rule the other three wires state as `!isToolOnly`. Reading the call's
+      // arguments as prose gave it a ref (and so a legal range endpoint) on this wire only.
+      const stampable = (m?.role === "user" || m?.role === "assistant") && prose.trim() !== "" && textSlot(m, "content") !== null;
       return {
         index,
         role: m?.role ?? "user",

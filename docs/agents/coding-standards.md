@@ -14,6 +14,10 @@ A refusal is half a gate. Assert the direction that fires **and** the direction 
 
 Every rejection string carries the `mNNNNN` of the unit that caused it and a sentence a model can act on: which unit, why, and where the range may start instead. "超出可折叠窗口" alone is a dead end; `范围含媒体消息 m00002…请把范围收在它之后` is an instruction.
 
+## A gate is proven on all four wires
+
+`test/matrix.test.mjs` is the default home for a new gate: one abstract transcript, two rows (`fires` / `holds`), executed on chat, anthropic, responses and gemini. A gate written against one wire's shape is the bug this matrix exists to catch — chat once stamped a bare tool call because it sniffed the call's arguments as prose, and only the four-wire rows saw it. Gates that never read the body (a limit, a latch) go in `ELSEWHERE` with the file that does the work instead of four copies of one assertion.
+
 ## A gate updates the rules it enforces
 
 `docs/magpie-acp-plugin-design.md` §7 lists the safety rules and the decision-site table beneath them. A gate that isn't in that list, or a new decision site that isn't in the table, is a doc that will mislead the next session.

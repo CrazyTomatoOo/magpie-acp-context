@@ -144,6 +144,8 @@ sequenceDiagram
 | `session.elide` | `src/store.mjs` | 第三次仍超限的计数、目标、上闩的 refs;真折叠一结算就清(#19) |
 | `overLimit` | `hooks.mjs` 的 `onRequest` | 只在 `fallback: "full"` 且上限已知、请求已到 95% 时为真;第二轮单元门槛从这里降到 2,000 |
 
+四份协议形状(chat、anthropic、responses、gemini)共用同一套判据,`test/matrix.test.mjs` 是这件事的默认检查:一份抽象 transcript,每道闸门两行(`fires` / `holds`),四条 wire 各跑一遍(#12)。`fires` 说的是闸门动手(拒绝、扩轮、裁剪、盖章),`holds` 说的是闸门退开、请求与没有它时一样;只写一行等于只证了一半。闸门输出本来就按 wire 不同的地方不抹平,写在行里当注:比如工具配对,anthropic 与 gemini 把工具结果写成 user 消息,那一处就成了轮的起点,范围可以停在调用上再由 `pairSafe` 把结果带进来;chat 与 responses 的工具流量有自己的角色,调用落在轮中,同样的范围直接被拒。两条路都满足同一条不变量——不切开配对。
+
 新加一类 barrier 或一道闸门时,`test/invariants.test.mjs` 是那个会变红的默认检查:它把每份合成的历史报价出去,原样折一次,断言能结算。报价侧还有一条同源的检查:广告出去的起点不能落进已经结算的折叠里 —— 包括**本轮自己刚结算的那一个**;漏掉这条时,线上会出现「wire 上是 `[acp] m00001–m00016`,note 却让人折 `m00001–m00018`」,模型照做就折出嵌套摘要,`liveRanges` 再按重叠丢掉里面那一份,工作是白做的。ref 顺序是同一侧的另一条:`test/ref-order.test.mjs` 断言标记穿的是被替代那段的号、广告出去的范围在历史里递增、两端有重名时不被广告。
 
 ---
