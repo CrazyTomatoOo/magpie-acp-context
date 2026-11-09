@@ -1,9 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { onRequest, onResponse } from "../hooks.mjs";
-import { COMPRESS_ACK } from "../src/compress.mjs";
 import {
   decideNudge,
   nudgeMinGain,
@@ -13,17 +11,10 @@ import {
   NUDGE_SMALL_WINDOW,
 } from "../src/nudge.mjs";
 import { sessionReport } from "../src/report.mjs";
+import { compressAck as ack, compressCall as call, tempStore, wireOptions } from "./fixtures.mjs";
 
 const FLOOR = 4000;
-const store = () => mkdtempSync(join(tmpdir(), "acp-nudge-"));
-const opts = (over = {}) => ({
-  enabled: true,
-  keepRecentTurns: 1,
-  minRangeBytes: 1,
-  nudge: { growthFloor: FLOOR },
-  store: { dir: store() },
-  ...over,
-});
+const opts = (over = {}) => wireOptions(tempStore("acp-nudge-"), { nudge: { growthFloor: FLOOR }, ...over });
 const ctxOf = (options, session = "e") => ({ protocol: "chat", origin: "local", session, options });
 const stateOf = (options) => JSON.parse(readFileSync(join(options.store.dir, "sessions", "e.json"), "utf8"));
 const noteOf = (out) => String(out?.messages?.at(-1)?.content ?? "");
@@ -42,22 +33,6 @@ const padding = (n = 8, tag = "") => {
   }
   return rows;
 };
-
-const call = (id, range) => ({
-  role: "assistant",
-  content: "",
-  tool_calls: [
-    {
-      id,
-      type: "function",
-      function: {
-        name: "compress",
-        arguments: JSON.stringify({ content: `${range} 早期需求\n早期需求是把方案讲清楚,这件事已经做完,结论记在这儿。` }),
-      },
-    },
-  ],
-});
-const ack = (id) => ({ role: "tool", tool_call_id: id, content: `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。` });
 
 /** A history with room to fold: one settled fold at the head, plenty left to advertise. */
 function history() {

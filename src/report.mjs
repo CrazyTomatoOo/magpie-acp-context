@@ -67,14 +67,16 @@ function foldRow(fold, index, now) {
   const state = fold.evictedAt ? " 原文已淘汰" : "";
   const blocks = Array.isArray(fold.blocks) ? ` ${fold.blocks.length} 条` : "";
   const id = String(fold.id ?? "").slice(0, 12);
-  return `    ${index + 1}. ${fold.startRef}–${fold.endRef}${fold.topic ? ` 「${fold.topic}」` : ""} ${size}${blocks}${when}${state}${id ? ` block ${id}` : ""}`;
+  // The marker reads back the span the fold took, so a widening is only visible here.
+  const asked = fold.asked?.from ? ` (请求 ${fold.asked.from}–${fold.asked.to ?? "?"})` : "";
+  return `    ${index + 1}. ${fold.startRef}–${fold.endRef}${asked}${fold.topic ? ` 「${fold.topic}」` : ""} ${size}${blocks}${when}${state}${id ? ` block ${id}` : ""}`;
 }
 
 /**
  * One session, in the order a reader asks the questions: how big is the request, is the ledger
  * keeping up, did the folds actually render, and if nothing folded — why not.
  */
-export function sessionReport(session, { growthFloor = 50000, turnLimit = 5, foldLimit = 10, now = Date.now() } = {}) {
+export function sessionReport(session, { growthFloor = 50000, foldLimit = 10, now = Date.now() } = {}) {
   const lines = [];
   const request = session.request ?? null;
   const foldList = Array.isArray(session.foldList) ? session.foldList : [];
@@ -196,10 +198,10 @@ export function renderSkips(skips = [], { limit = 5, now = Date.now() } = {}) {
 }
 
 /** The whole store: one header line, then the sessions, then the gates that skipped requests. */
-export function renderStatus({ storeDir, sessions, blocks, bytes, skips = [] }, { growthFloor = 50000, limit = 5, turns = 5, foldLimit = 10, now = Date.now() } = {}) {
+export function renderStatus({ storeDir, sessions, blocks, bytes, skips = [] }, { growthFloor = 50000, limit = 5, foldLimit = 10, now = Date.now() } = {}) {
   const out = [`store ${storeDir}:${num(blocks.length)} 个块 / ${num(bytes)} 字节;${num(sessions.length)} 个会话;折叠提醒线 = 增长 ${num(growthFloor)} tokens。`];
   if (!sessions.length) out.push("还没有会话记录。");
-  for (const session of sessions.slice(0, limit)) out.push(...sessionReport(session, { growthFloor, turnLimit: turns, foldLimit, now }));
+  for (const session of sessions.slice(0, limit)) out.push(...sessionReport(session, { growthFloor, foldLimit, now }));
   const skipLines = renderSkips(skips, { now });
   if (skipLines.length) out.push(...skipLines);
   return out.join("\n");

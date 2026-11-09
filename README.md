@@ -422,19 +422,25 @@ newest of them.
 ## Tests
 
 ```sh
-bun test test/                       # 259 tests across 16 files: refs, folds, protocols, safety rules,
-                                     # the offer/apply invariant matrix, whole-turn alignment, tools, usage
-                                     # shapes, nudge rules, the cap, eviction, compaction, reconcile, CLI,
-                                     # inherited sessions, and the tool-name shapes real wires send back
+bun run lint                         # biome: unused imports, stray escapes, dead parameters -
+                                     # the class of defect `bun test` cannot see, because a
+                                     # duplicate `function plan` or an unused helper still runs
+bun test test/                       # 431 tests across 21 files: refs, folds, protocols, safety rules,
+                                     # the offer/apply invariant matrix, the four-wire gate matrix,
+                                     # whole-turn alignment, condensed summaries, tools, usage
+                                     # shapes, nudge rules, the cap, the elision, eviction,
+                                     # compaction, reconcile, CLI, inherited sessions, and the
+                                     # tool-name shapes real wires send back
 ./test/e2e/run.sh                    # container end-to-end: 6,933 B request → 1,269 B on the wire,
                                      # a nudge on the wire, all four tools over MCP,
                                      # the billed prompt tokens landing in acp_status,
                                      # streamed usage reaching the ledger too,
                                      # the client's session header naming the ledger,
+                                     # the three safety gates refused on a real request,
                                      # and the store surviving a restart
 ```
 
-`bun test test/` 是这个仓库唯一的检查。CI 在每次 push 和 PR 上都会跑(`.github/workflows/test.yml`);想在提交前就跑,每个 clone 启用一次自带的 hook:
+`bun run lint` 和 `bun test test/` 是这个仓库的两个检查。CI 在每次 push 和 PR 上都会跑(`.github/workflows/test.yml`);想在提交前就跑,每个 clone 启用一次自带的 hook(`bun install` 之后 lint 才有得跑,hook 会在缺 biome 时跳过它并说明):
 
 ```sh
 git config core.hooksPath .githooks    # 关掉:git config --unset core.hooksPath

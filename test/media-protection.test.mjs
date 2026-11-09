@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { planFolds } from "../hooks.mjs";
 import { adapterFor } from "../src/protocol.mjs";
-import { COMPRESS_ACK } from "../src/compress.mjs";
-
-const filler = (n) => "填充文本,内容重复,记住结论就够。".repeat(n);
+import { ACK, SUMMARY_FILLER, filler, foldInput, planOf, transcript } from "./fixtures.mjs";
 
 /**
  * A fold is only safe when its stored original can give everything back. The store keeps
@@ -11,40 +8,24 @@ const filler = (n) => "填充文本,内容重复,记住结论就够。".repeat(n
  * audio is gone the moment its range folds - the placeholder `[image]` is all that survives (#10).
  */
 function history({ withImage = true, imageAt = 1, compressRange = "m00001–m00003" } = {}) {
-  const raw = [
+  const units = transcript([
     ["user", filler(20), true, []],
     ["user", filler(10), true, []],
     ["assistant", filler(14), true, []],
     ["user", filler(12), true, []],
     // A turn after the media so the advertised window can hold one whole turn (#11).
     ["user", filler(10), true, []],
-    [
-      "assistant",
-      "",
-      false,
-      [{ name: "compress", input: { content: `${compressRange} 早期\n读了几轮文件,结论是填充文本,不需要逐字保留,后来的人知道这一点就够继续了。` } }],
-    ],
-    ["tool", `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。`, false, []],
+    ["assistant", "", false, [{ name: "compress", input: foldInput(compressRange, SUMMARY_FILLER) }]],
+    ["tool", ACK, false, []],
     ["user", "再", true, []],
     ["assistant", "最新", true, []],
     ["user", "现在", true, []],
-  ];
-  return raw.map(([role, text, stampable, toolCalls], index) => ({
-    index,
-    role,
-    text,
-    stampable,
-    toolCalls,
-    blockId: `b${index}`,
-    ref: `m${String(index + 1).padStart(5, "0")}`,
-    media: withImage && index === imageAt,
-  }));
+  ]);
+  if (withImage) units[imageAt].media = true;
+  return units;
 }
 
-function plan(units) {
-  const refs = Object.fromEntries(units.map((u) => [u.blockId, u.ref]));
-  return planFolds({ units, refs, session: { folds: () => [] }, cfg: { keepRecentTurns: 1, minRangeBytes: 40, maxSummaryChars: 20000 } });
-}
+const plan = (units) => planOf(units);
 
 describe("a range holding media is never folded (#10)", () => {
   test("the fold is refused and the reason names the media message", () => {

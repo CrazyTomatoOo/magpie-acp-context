@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "files": { "includes": ["**/*.mjs", "**/*.js"] },
+  "formatter": { "enabled": false },
+  "assist": { "enabled": false },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "complexity": { "noForEach": "off", "useOptionalChain": "off" },
+      "correctness": { "noUnusedVariables": "error", "noUnusedImports": "error" },
+      "suspicious": { "noExplicitAny": "error", "noAssignInExpressions": "off" },
+      "style": { "noNonNullAssertion": "off", "useTemplate": "off", "noParameterAssign": "off", "useNodejsImportProtocol": "off" },
+      "performance": { "noDelete": "off" }
+    }
+  }
+}

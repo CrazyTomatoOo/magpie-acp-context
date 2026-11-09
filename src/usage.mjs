@@ -83,6 +83,6 @@ export function readRefusal(reply) {
   text = String(text).replace(/\s+/g, " ").trim().slice(0, 300);
   const contextLimit = /context.{0,24}limit|maximum context|too (long|many tokens)|input (is )?too long|exceeds.{0,24}(limit|tokens)|上下文.{0,10}(超|上限)/i.test(text);
   const named = text.match(/([\d][\d,.]{3,})\s*(?:tokens?|tok)\b/i);
-  const limit = named ? Number(named[1].replace(/[,\.]/g, "")) : 0;
+  const limit = named ? Number(named[1].replace(/[,.]/g, "")) : 0;
   return { text, contextLimit, limit: Number.isFinite(limit) && limit > 0 ? limit : 0 };
 }

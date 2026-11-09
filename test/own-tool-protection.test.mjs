@@ -2,49 +2,31 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { onRequest, planFolds } from "../hooks.mjs";
-import { COMPRESS_ACK, ownToolUnit } from "../src/compress.mjs";
-
-const filler = (n) => "填充文本,内容重复,记住结论就够。".repeat(n);
+import { onRequest } from "../hooks.mjs";
+import { ownToolUnit } from "../src/compress.mjs";
+import { ACK, SUMMARY_FILLER, filler, foldInput, planOf, transcript } from "./fixtures.mjs";
 
 /**
  * A history that already ran one of our tools (an `acp_status` call and its reply) in the middle,
  * and then made a compress call. Refs are handed out in order, so `m00002` is the status call.
  */
 function history({ compressRange = "m00001–m00004" } = {}) {
-  const raw = [
+  return transcript([
     ["user", filler(20), true, []],
     ["assistant", "", false, [{ name: "acp_status", input: {} }]],
     ["tool", "会话状态:refs=12 folds=1", false, []],
     ["user", filler(30), true, []],
     ["assistant", filler(15), true, []],
     ["user", filler(8), true, []],
-    [
-      "assistant",
-      "",
-      false,
-      [{ name: "compress", input: { content: `${compressRange} 早期\n读了几轮文件,结论是填充文本,不需要逐字保留,后来的人知道这一点就够继续了。` } }],
-    ],
-    ["tool", `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。`, false, []],
+    ["assistant", "", false, [{ name: "compress", input: foldInput(compressRange, SUMMARY_FILLER) }]],
+    ["tool", ACK, false, []],
     ["user", "再", true, []],
     ["assistant", "最新", true, []],
     ["user", "现在", true, []],
-  ];
-  return raw.map(([role, text, stampable, toolCalls], index) => ({
-    index,
-    role,
-    text,
-    stampable,
-    toolCalls,
-    blockId: `b${index}`,
-    ref: `m${String(index + 1).padStart(5, "0")}`,
-  }));
+  ]);
 }
 
-function plan(units) {
-  const refs = Object.fromEntries(units.map((u) => [u.blockId, u.ref]));
-  return planFolds({ units, refs, session: { folds: () => [] }, cfg: { keepRecentTurns: 1, minRangeBytes: 40, maxSummaryChars: 20000 } });
-}
+const plan = (units) => planOf(units);
 
 describe("the plugin's own tool records are never folded away (#9)", () => {
   test("a range that swallows our status call is refused, and the reason names it", () => {
@@ -87,7 +69,7 @@ describe("what counts as our own record", () => {
   });
 
   test("our reply, but not a transcript that merely quotes it", () => {
-    expect(ownToolUnit({ text: `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。` })).toBe(true);
+    expect(ownToolUnit({ text: `${ACK}` })).toBe(true);
     expect(ownToolUnit({ text: "echo 解析到 1 段" })).toBe(false);
     expect(ownToolUnit({ text: "### `magpie-acp-context_decompress`" })).toBe(false);
   });
@@ -120,7 +102,7 @@ describe("the refusal reaches the model", () => {
             },
           ],
         },
-        { role: "tool", tool_call_id: "c2", content: `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。` },
+        { role: "tool", tool_call_id: "c2", content: `${ACK}` },
         { role: "user", content: "继续" },
       ],
     };

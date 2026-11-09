@@ -1,8 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { planFolds } from "../hooks.mjs";
-import { COMPRESS_ACK } from "../src/compress.mjs";
-
-const filler = (n) => "填充文本,内容重复,记住结论就够。".repeat(n);
+import { ACK, SUMMARY_FILLER, filler, foldInput, planOf, transcript } from "./fixtures.mjs";
 
 /**
  * The advertised range must begin where apply would accept it (#16).
@@ -14,67 +11,39 @@ const filler = (n) => "填充文本,内容重复,记住结论就够。".repeat(n
  * the same impossible start again.
  */
 function history({ compressRange = "m00001–m00001" } = {}) {
-  const raw = [
+  return transcript([
     ["user", filler(20), true, []],
     ["assistant", "", false, [{ name: "acp_status", input: {} }]],
     ["tool", "会话状态:refs=12 folds=1", false, []],
     ["user", filler(30), true, []],
     ["assistant", filler(15), true, []],
     ["user", filler(8), true, []],
-    [
-      "assistant",
-      "",
-      false,
-      [{ name: "compress", input: { content: `${compressRange} 早期\n读了几轮文件,结论是填充文本,不需要逐字保留,后来的人知道这一点就够继续了。` } }],
-    ],
-    ["tool", `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。`, false, []],
+    ["assistant", "", false, [{ name: "compress", input: foldInput(compressRange, SUMMARY_FILLER) }]],
+    ["tool", ACK, false, []],
     ["user", "再", true, []],
     ["assistant", "最新", true, []],
     ["user", "现在", true, []],
-  ];
-  return raw.map(([role, text, stampable, toolCalls], index) => ({
-    index,
-    role,
-    text,
-    stampable,
-    toolCalls,
-    blockId: `b${index}`,
-    ref: `m${String(index + 1).padStart(5, "0")}`,
-  }));
+  ]);
 }
 
 /** The same shape with no own-tool record: the window starts at the first message and stays there. */
 function plainHistory({ compressRange = "m00001–m00001" } = {}) {
-  const raw = [
-    ["user", filler(20), true, []],
-    ["assistant", filler(15), true, []],
-    ["user", filler(8), true, []],
+  return transcript(
     [
-      "assistant",
-      "",
-      false,
-      [{ name: "compress", input: { content: `${compressRange} 早期\n读了几轮文件,结论是填充文本,不需要逐字保留,后来的人知道这一点就够继续了。` } }],
+      ["user", filler(20), true, []],
+      ["assistant", filler(15), true, []],
+      ["user", filler(8), true, []],
+      ["assistant", "", false, [{ name: "compress", input: foldInput(compressRange, SUMMARY_FILLER) }]],
+      ["tool", ACK, false, []],
+      ["user", "再", true, []],
+      ["assistant", "最新", true, []],
+      ["user", "现在", true, []],
     ],
-    ["tool", `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。`, false, []],
-    ["user", "再", true, []],
-    ["assistant", "最新", true, []],
-    ["user", "现在", true, []],
-  ];
-  return raw.map(([role, text, stampable, toolCalls], index) => ({
-    index,
-    role,
-    text,
-    stampable,
-    toolCalls,
-    blockId: `p${index}`,
-    ref: `m${String(index + 1).padStart(5, "0")}`,
-  }));
+    { prefix: "p" },
+  );
 }
 
-function plan(units) {
-  const refs = Object.fromEntries(units.map((u) => [u.blockId, u.ref]));
-  return planFolds({ units, refs, session: { folds: () => [] }, cfg: { keepRecentTurns: 1, minRangeBytes: 40, maxSummaryChars: 20000 } });
-}
+const plan = (units) => planOf(units);
 
 const refs = (units, out) => `${units[out.foldable.from].ref}–${units[out.foldable.to].ref}`;
 

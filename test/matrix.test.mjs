@@ -22,24 +22,22 @@
  * coding-standards.md), which turns that guard red until the rows exist here.
  */
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { onRequest, planFolds } from "../hooks.mjs";
-import { COMPRESS_ACK } from "../src/compress.mjs";
+import { onRequest } from "../hooks.mjs";
 import { scanStore } from "../src/maintenance.mjs";
 import { adapterFor, SUPPORTED } from "../src/protocol.mjs";
-import { blockIdOf } from "../src/text.mjs";
+import { ACK, tempStore } from "./fixtures.mjs";
 
 const WIRES = SUPPORTED;
 const FOLDER = "call_fold";
 const SYSTEM_TEXT = "You are a careful agent. Keep answers short.";
 
-const store = () => ({ dir: mkdtempSync(join(tmpdir(), "acp-matrix-")) });
+const store = () => ({ dir: tempStore("acp-matrix-") });
 const opts = (over = {}) => ({ enabled: true, keepRecentTurns: 1, minRangeBytes: 1000, store: store(), ...over });
 const ctxOf = (options, wire) => ({ protocol: wire, origin: "local", session: "matrix", options });
 const sessionOf = (options) => scanStore(options.store.dir).sessions[0];
-const ackText = (id = FOLDER) => `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。(${id})`;
+const ackText = (id = FOLDER) => `${ACK}(${id})`;
 const ref = (n) => `m${String(n).padStart(5, "0")}`;
 
 /* ------------------------------------------------------------------ the abstract turns */
@@ -159,7 +157,6 @@ function wireBody(wire, turns, { system = SYSTEM_TEXT } = {}) {
 
 const readOf = (body, wire) => adapterFor(wire).read(body);
 const findUnit = (units, needle) => units.findIndex((unit) => unit.text.includes(needle));
-const unitsOf = (body, wire) => adapterFor(wire).unitArray(body);
 const systemOf = (body, wire) => {
   if (wire === "chat") return String(body.messages?.[0]?.content ?? "");
   if (wire === "anthropic") return String(body.system ?? "");

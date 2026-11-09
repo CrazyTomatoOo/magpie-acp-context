@@ -1,10 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { buildNote, planFolds } from "../hooks.mjs";
-import { COMPRESS_ACK, CONDENSED_SUMMARY_BYTES, MIN_SUMMARY_BYTES } from "../src/compress.mjs";
-
-const filler = (n) => "填充文本,内容重复,记住结论就够。".repeat(n);
-const pad = (n) => "x".repeat(n);
-const marker = (start, end, body) => `[acp] ${start}–${end} 早期\n${body}`;
+import { buildNote } from "../hooks.mjs";
+import { CONDENSED_SUMMARY_BYTES, MIN_SUMMARY_BYTES } from "../src/compress.mjs";
+import { ACK, filler, foldInput, marker, pad, planOf, transcript } from "./fixtures.mjs";
 
 /**
  * A summary of summaries (#14).
@@ -14,28 +11,16 @@ const marker = (start, end, body) => `[acp] ${start}–${end} 早期\n${body}`;
  * doubles and the note asks for the cross-range thread and a topic list.
  */
 function history({ units, summary, range }) {
-  const raw = [...units];
-  raw.push(["user", "把前面折掉。", true, []]);
-  raw.push(["assistant", "", true, [{ name: "compress", input: { content: `${range} 早期\n${summary}` } }]]);
-  raw.push(["tool", `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。`, false, []]);
-  raw.push(["user", "再", true, []]);
-  return raw.map(([role, text, stampable, toolCalls], index) => ({
-    index,
-    role,
-    text,
-    stampable,
-    toolCalls,
-    blockId: `b${index}`,
-    ref: `m${String(index + 1).padStart(5, "0")}`,
-  }));
+  return transcript([
+    ...units,
+    ["user", "把前面折掉。", true, []],
+    ["assistant", "", true, [{ name: "compress", input: foldInput(range, summary) }]],
+    ["tool", ACK, false, []],
+    ["user", "再", true, []],
+  ]);
 }
 
-function plan(units) {
-  const refs = Object.fromEntries(units.map((u) => [u.blockId, u.ref]));
-  const session = { folds: () => [] };
-  const cfg = { keepRecentTurns: 1, minRangeBytes: 40, maxSummaryChars: 20000 };
-  return planFolds({ units, refs, session, cfg });
-}
+const plan = (units) => planOf(units);
 
 const material = () => `${filler(20)}${pad(120)}`;
 

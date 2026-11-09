@@ -14,4 +14,4 @@ Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents
 
 ### Coding standards
 
-Review-time rules no check can enforce: gates ship both ways, a new gate reaches the offer side through the shared judgment, refusals name their ref. See `docs/agents/coding-standards.md`.
+See `docs/agents/coding-standards.md`.

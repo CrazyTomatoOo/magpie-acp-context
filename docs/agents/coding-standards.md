@@ -21,3 +21,7 @@ Every rejection string carries the `mNNNNN` of the unit that caused it and a sen
 ## A gate updates the rules it enforces
 
 `docs/magpie-acp-plugin-design.md` §7 lists the safety rules and the decision-site table beneath them. A gate that isn't in that list, or a new decision site that isn't in the table, is a doc that will mislead the next session.
+
+## A history fixture is written once
+
+`test/fixtures.mjs` owns the skeleton: `transcript()` (which refuses a history that does not open on a user turn), `unit()`, `planOf()`, the summary sentences, the ack text, `compressCall`/`compressAck`, `tempStore`/`wireOptions`. A test with its own copy of that map-and-number loop is how eight copies drifted and one of them measured the wrong range for two months. Test-specific histories stay in their file — built out of these pieces, not beside them.

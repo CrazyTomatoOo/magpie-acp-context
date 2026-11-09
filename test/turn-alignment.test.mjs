@@ -1,16 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { planFolds } from "../hooks.mjs";
-import { COMPRESS_ACK } from "../src/compress.mjs";
-
-const filler = (n) => "填充文本,内容重复,记住结论就够。".repeat(n);
-
-const unit = (role, text, { media = false, toolCalls = [] } = {}) => ({
-  role,
-  text,
-  stampable: role !== "tool" && text.trim() !== "" && toolCalls.length === 0,
-  media,
-  toolCalls,
-});
+import { sessionReport } from "../src/report.mjs";
+import { ACK, SUMMARY_FILLER, foldInput, planOf, transcript, unit, filler } from "./fixtures.mjs";
 
 /**
  * Turns here: index 0 opens turn 1 (a user message), 3 opens turn 2, 5 opens turn 3, 8 opens the
@@ -18,26 +8,23 @@ const unit = (role, text, { media = false, toolCalls = [] } = {}) => ({
  * work is done while the instruction that asked for it stays outside (#11).
  */
 function history(range) {
-  const raw = [
+  return transcript([
     unit("user", filler(20)),
     unit("assistant", filler(12)),
     unit("assistant", filler(12)),
     unit("user", filler(10)),
     unit("assistant", filler(12)),
     unit("user", filler(8)),
-    unit("assistant", "", { toolCalls: [{ name: "compress", input: { content: `${range} 早期\n读了几轮文件,结论是填充文本,不需要逐字保留,后来的人知道这一点就够继续了。` } }] }),
-    unit("tool", `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。`),
+    unit("assistant", "", { toolCalls: [{ name: "compress", input: foldInput(range, SUMMARY_FILLER) }] }),
+    unit("tool", ACK),
     unit("user", "再"),
     unit("assistant", "最新"),
     unit("user", "现在"),
-  ];
-  return raw.map((u, index) => ({ ...u, index, blockId: `b${index}`, ref: `m${String(index + 1).padStart(5, "0")}` }));
+  ]);
 }
 
 function plan(range) {
-  const units = history(range);
-  const refs = Object.fromEntries(units.map((u) => [u.blockId, u.ref]));
-  return planFolds({ units, refs, session: { folds: () => [] }, cfg: { keepRecentTurns: 1, minRangeBytes: 40, maxSummaryChars: 20000 } });
+  return planOf(history(range));
 }
 
 const settled = (out) => `${out.created[0].startRef}–${out.created[0].endRef}`;
@@ -81,5 +68,24 @@ describe("the offer is already turn-aligned, so an advertised range settles as o
     expect(out.foldable).not.toBeNull();
     expect(out.foldable.from).toBe(0);
     expect(`${history("m00003–m00002")[out.foldable.to].ref}`).toBe("m00005");
+  });
+});
+
+describe("a widening is recorded, because nothing else shows it", () => {
+  test("the fold keeps the range the model asked for", () => {
+    // The marker the model reads back says m00001–m00005; only the record can say it asked for
+    // m00003–m00004 and was widened, which is what tells a reader the turns did the widening.
+    const out = plan("m00003–m00004");
+    expect(out.created[0].asked).toEqual({ from: "m00003", to: "m00004" });
+  });
+
+  test("a range the turns already covered records nothing", () => {
+    expect(plan("m00001–m00005").created[0].asked).toBeUndefined();
+  });
+
+  test("the report shows the request next to the span that settled", () => {
+    const out = plan("m00003–m00004");
+    const text = sessionReport({ folds: () => [], foldList: out.created, refs: 5 }).join("\n");
+    expect(text).toContain("m00001–m00005 (请求 m00003–m00004)");
   });
 });

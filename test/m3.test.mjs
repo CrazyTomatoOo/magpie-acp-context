@@ -9,7 +9,6 @@ import { openSession } from "../src/store.mjs";
 import { forget, reconcile, renderStatus, scanStore, unlock } from "../src/maintenance.mjs";
 
 const store = () => mkdtempSync(join(tmpdir(), "acp-m3-"));
-const NL = "\n";
 
 function chatHistory({ padded = 4000, extra = "" } = {}) {
   return {

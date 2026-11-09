@@ -602,10 +602,14 @@ export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
       }
       const startBlock = units[safe.start].blockId;
       const endBlock = units[safe.end].blockId;
+      // What the model asked for is worth keeping when widening moved it: the marker it will read
+      // back shows the settled span, and `acp_status` is the only place the request can be found.
+      const asked = entry.startId === refs[startBlock] && entry.endId === refs[endBlock] ? null : { from: entry.startId, to: entry.endId };
       created.push({
         id: `${startBlock}-${endBlock}-${sha256(summary).slice(0, 12)}`,
         startRef: refs[startBlock],
         endRef: refs[endBlock],
+        ...(asked ? { asked } : {}),
         startBlock,
         endBlock,
         topic: String(entry.topic || "").slice(0, 120),

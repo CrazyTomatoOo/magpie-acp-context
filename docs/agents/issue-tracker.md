@@ -7,7 +7,7 @@ Repository: `crazytomatooo/magpie-acp-context` (the remote's login is `CrazyToma
 ## Conventions
 
 - **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc or `--body-file` for multi-line bodies.
-- **Read an issue**: `gh issue view <number> --comments`, filtering comments by `jq` and also fetching labels. For long bodies, dump JSON (`gh issue view <n> --json title,body,labels`) and read the file — terminal capture can elide long lines.
+- **Read an issue**: `read issue://<n>` — one call, body and comments together, no REST path to misspell. `gh issue view <number> --comments` works too; for long bodies dump JSON (`gh issue view <n> --json title,body,labels`) and read the file, because terminal capture elides long lines.
 - **List issues**: `gh issue list --state open --json number,title,body,labels --jq '[.[] | {number, title, body, labels: [.labels[].name]}]'` with appropriate `--label` and `--state` filters.
 - **Comment on an issue**: `gh issue comment <number> --body-file <file>` for anything longer than a line.
 - **Edit a body**: `gh issue edit <number> --body-file <file>`.
@@ -16,7 +16,7 @@ Repository: `crazytomatooo/magpie-acp-context` (the remote's login is `CrazyToma
 
 Prefer `--body-file` over inline `--body` for anything multi-line; the same goes for `gh issue edit`.
 
-If `gh api repos/<owner>/<repo>/...` returns 404 while `gh issue view` works, use the id-based path (`gh api repos/... ` by numeric database id) — name resolution in the REST API has failed transiently here before.
+A 404 from `gh api repos/<owner>/<repo>/...` almost always means the owner/repo string is misspelled — check the spelling before suspecting the API. `read issue://<n>` avoids the question: it does not go through a REST path at all.
 
 ## Pull requests as a triage surface
 

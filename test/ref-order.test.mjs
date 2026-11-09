@@ -1,9 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { onRequest } from "../hooks.mjs";
-import { COMPRESS_ACK } from "../src/compress.mjs";
+import { compressAck as ack, compressCall as call, tempStore, wireOptions } from "./fixtures.mjs";
 
 /**
  * A ref is a content id, and that has two consequences the note has to survive (#17):
@@ -18,8 +17,7 @@ import { COMPRESS_ACK } from "../src/compress.mjs";
  * start of a range: the note only prints a span that resolves to exactly itself.
  */
 
-const store = () => mkdtempSync(join(tmpdir(), "acp-refs-"));
-const opts = (over = {}) => ({ enabled: true, keepRecentTurns: 1, minRangeBytes: 1, store: { dir: store() }, ...over });
+const opts = (over = {}) => wireOptions(tempStore("acp-refs-"), over);
 const ctxOf = (options, session = "r") => ({ protocol: "chat", origin: "local", session, options });
 const stateOf = (options) => JSON.parse(readFileSync(join(options.store.dir, "sessions", "r.json"), "utf8"));
 const body = (messages) => ({ model: "x", messages: structuredClone(messages) });
@@ -45,22 +43,6 @@ const turn = (i) => [
   { role: "user", content: `问题 ${i}:${para(i)}` },
   { role: "assistant", content: `回答 ${i}:${para(i)}` },
 ];
-
-const call = (id, range) => ({
-  role: "assistant",
-  content: "",
-  tool_calls: [
-    {
-      id,
-      type: "function",
-      function: {
-        name: "compress",
-        arguments: JSON.stringify({ content: `${range} 早期需求\n早期需求是把方案讲清楚,这件事已经做完,结论记在这儿。` }),
-      },
-    },
-  ],
-});
-const ack = (id) => ({ role: "tool", tool_call_id: id, content: `解析到 1 段;${COMPRESS_ACK}(本工具不写历史)。` });
 
 /** The call and its reply open the protected tail, so they stay out of the window they fold. */
 const foldTurn = (range, label = "把开头那两轮折掉。", id = "c1") => [

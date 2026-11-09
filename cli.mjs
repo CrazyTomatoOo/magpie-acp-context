@@ -3,7 +3,7 @@
  * Operator CLI. Deliberately not part of the request path and not part of either Bun host:
  * it runs under plain Node (>= 22) so it can be used when magpie itself is not running.
  *
- *   magpie-acp status  [--limit N] [--session KEY] [--turns N] [--folds N] [--growth-floor N] [--json]
+ *   magpie-acp status  [--limit N] [--session KEY] [--folds N] [--growth-floor N] [--json]
  *   magpie-acp sessions [--json]
  *   magpie-acp folds   [session] [--json]
  *   magpie-acp turns   [session] [--limit N] [--json]
@@ -18,10 +18,9 @@
  *
  * The store directory comes from `--store`, then MAGPIE_ACP_STORE, then the plugin default.
  */
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
-import { findBlock, listBlocks, searchBlocks } from "./src/blocks.mjs";
+import { resolve } from "node:path";
+import { findBlock, searchBlocks } from "./src/blocks.mjs";
 import { cleanup } from "./src/store.mjs";
 import { forget, reconcile, renderSkips, renderStatus, scanStore, sessionReport, unlock } from "./src/maintenance.mjs";
 import { foldStats, reportData } from "./src/report.mjs";
@@ -78,7 +77,7 @@ function usage() {
     [
       "usage: magpie-acp <command> [options]",
       "",
-      "  status      [--limit N] [--session KEY] [--turns N] [--folds N] [--growth-floor N] [--json]",
+      "  status      [--limit N] [--session KEY] [--folds N] [--growth-floor N] [--json]",
       "  sessions    [--json]",
       "  folds       [session] [--json]               折叠明细与省下的字节/token",
       "  turns       [session] [--limit N] [--json]    每个会话最近几轮的体量走势",
@@ -112,7 +111,7 @@ function main(argv) {
       }
       const out = renderStatus(
         { ...scan, sessions: shown },
-        { growthFloor, limit, turns: num(flags.turns, 5), foldLimit: num(flags.folds, 10) },
+        { growthFloor, limit, foldLimit: num(flags.folds, 10) },
       );
       return print(flags.session && !shown.length ? `${out}\n没有这个会话:${flags.session}` : out, flags);
     }
@@ -122,7 +121,7 @@ function main(argv) {
       if (!shown.length) return print(rest[1] ? `没有这个会话:${rest[1]}` : "还没有会话记录。", flags);
       if (flags.json) return print(shown.map((s) => ({ key: s.key, folds: s.foldList, ...foldStats(s.foldList) })), flags);
       const lines = [];
-      for (const s of shown) lines.push(...sessionReport(s, { growthFloor, foldLimit: num(flags.folds, 50), turns: 0 }));
+      for (const s of shown) lines.push(...sessionReport(s, { growthFloor, foldLimit: num(flags.folds, 50) }));
       return print(lines.join("\n"), flags);
     }
     case "turns": {

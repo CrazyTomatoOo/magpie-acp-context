@@ -41,7 +41,8 @@
   "scripts": {
     "test": "bun test test/",
     "cli": "node cli.mjs",
-    "parity": "node scripts/parity-check.mjs"
+    "parity": "node scripts/parity-check.mjs",
+    "lint": "biome check ."
   },
   "bin": {
     "magpie-acp": "./cli.mjs"
@@ -55,5 +56,8 @@
     "magpie-plugin",
     "context-compression",
     "acp"
-  ]
+  ],
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.6"
+  }
 }

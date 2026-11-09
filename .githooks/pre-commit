@@ -1,9 +1,14 @@
 #!/bin/sh
-# The one check this repo has. Enable once per clone:
+# The two checks this repo has. Enable once per clone:
 #   git config core.hooksPath .githooks
 # Disable: git config --unset core.hooksPath
 if ! command -v bun >/dev/null 2>&1; then
-  echo "pre-commit: bun not on PATH, skipping the test run" >&2
+  echo "pre-commit: bun not on PATH, skipping lint and tests" >&2
   exit 0
+fi
+if [ ! -x node_modules/.bin/biome ]; then
+  echo "pre-commit: biome not installed (run bun install once), skipping lint" >&2
+else
+  node_modules/.bin/biome check . || exit 1
 fi
 exec bun test test/
