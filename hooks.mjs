@@ -140,13 +140,14 @@ function pairSafe(units, start, end) {
 }
 
 /**
- * The first unit in a span that belongs to this plugin's own tool traffic, or -1.
+ * The first unit in a span that sits in `set`, or -1.
  *
- * A fold may not reach across it: the record has to stay where the model can read it (#9).
+ * A fold may not reach across a barrier: our own tool record has to stay where the model can read
+ * it (#9), and a media unit is unrecoverable the moment it folds (#10).
  */
-function ownToolBarrier(barriers, start, end) {
-  if (!barriers.size) return -1;
-  for (let i = start; i <= end; i += 1) if (barriers.has(i)) return i;
+function firstInSet(set, start, end) {
+  if (!set.size) return -1;
+  for (let i = start; i <= end; i += 1) if (set.has(i)) return i;
   return -1;
 }
 
@@ -160,7 +161,7 @@ function ownToolBarrier(barriers, start, end) {
  * bili #3236's advertise/apply split).
  */
 function citable(unit) {
-  return Boolean(unit && unit.stampable && unit.ref);
+  return Boolean(unit && unit.stampable && unit.ref && !unit.media);
 }
 
 /** The first index at or after `from` that a fold may BEGIN on, or `to + 1` when none does. */
@@ -171,12 +172,12 @@ function citableStart(units, from, to) {
 }
 
 /**
- * The offer must be a span that can actually settle: start after the newest own-tool record
- * inside it, so the note never advertises a range whose apply would refuse it (#9, the same
- * advertise/apply split bili fixed in #3236). A record is a call and its reply, so `i + 1` is
- * the reply - a tool result - and the start lands on the first citable unit after it (#16).
+ * The offer must be a span that can actually settle: start after the newest barrier inside it, so
+ * the note never advertises a range whose apply would refuse it (#9, the same advertise/apply
+ * split bili fixed in #3236). A barrier is our own tool record - a call and its reply, so `i + 1`
+ * is the reply, a tool result (#16) - or a media unit apply will not fold across (#10).
  */
-function trimAtOwnTools(units, window, barriers) {
+function trimPastBarriers(units, window, barriers) {
   for (let i = window.to; i >= window.from; i -= 1) {
     if (!barriers.has(i)) continue;
     const from = citableStart(units, i + 1, window.to);
@@ -248,10 +249,16 @@ export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
     if (ref) idToIndex.set(ref, unit.index);
   }
   const window0 = foldWindow(units, cfg.keepRecentTurns);
-  // Our own tool traffic is a barrier, not just a refusal: a range may not reach across it (#9).
+  // Barriers are not just refusals: a range may not reach across one, and the offer may not start
+  // before the newest one. Our own tool traffic is one kind (#9); a media unit is the other,
+  // because the store keeps text only - folding it makes the picture unrecoverable (#10).
   const barriers = new Set();
-  for (let i = 0; i < units.length; i += 1) if (ownToolUnit(units[i])) barriers.add(i);
-  const window = window0 ? trimAtOwnTools(units, window0, barriers) : null;
+  const media = new Set();
+  for (let i = 0; i < units.length; i += 1) {
+    if (ownToolUnit(units[i])) barriers.add(i);
+    if (units[i].media) { barriers.add(i); media.add(i); }
+  }
+  const window = window0 ? trimPastBarriers(units, window0, barriers) : null;
   const created = [];
   const unresolved = [];
   const foreign = [];
@@ -350,7 +357,14 @@ export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
       }
       if (coveredBySettled(startIndex, endIndex)) continue;
       const safe = pairSafe(units, startIndex, endIndex);
-      const barrier = ownToolBarrier(barriers, safe.start, safe.end);
+      const held = firstInSet(media, safe.start, safe.end);
+      if (held >= 0) {
+        rejected.push(
+          `${label}:范围含媒体消息 ${refs[units[held].blockId] ?? "?"}(图片/文件/音频),原文只存文本,折了之后 decompress 也取不回媒体;请把范围收在它之后`,
+        );
+        continue;
+      }
+      const barrier = firstInSet(barriers, safe.start, safe.end);
       if (barrier >= 0) {
         rejected.push(
           `${label}:范围含插件自己的压缩记录 ${refs[units[barrier].blockId] ?? "?"}(压缩/取回/状态的调用或结果),它要留在上下文里说明折过哪些段;请把范围收在它之后`,

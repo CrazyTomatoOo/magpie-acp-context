@@ -53,6 +53,31 @@ function partsText(parts) {
 }
 
 /**
+ * Payloads whose bytes a unit's text projection cannot carry.
+ *
+ * A fold's stored original is `{role, text}` and `decompress` hands that text back, so an
+ * `[image]` placeholder is all that survives a fold - the picture is gone from the context and
+ * unrecoverable from the store. `image_url`, gemini `inlineData` and the rest are listed for the
+ * same reason: whatever the fallback branch happens to serialize, what the model saw was not text.
+ */
+const MEDIA_TYPES = new Set(["image", "input_image", "image_url", "file", "input_file", "document", "audio", "input_audio", "video"]);
+
+function isMediaPart(part) {
+  if (!part || typeof part !== "object") return false;
+  if (MEDIA_TYPES.has(part.type)) return true;
+  if (part.inlineData || part.fileData) return true; // gemini
+  // A tool result can hand back an image inside its own content: folding the result folds it.
+  if (Array.isArray(part.content)) return part.content.some(isMediaPart);
+  if (Array.isArray(part.output)) return part.output.some(isMediaPart);
+  return false;
+}
+
+function hasMedia(content) {
+  if (!Array.isArray(content)) return false;
+  return content.some(isMediaPart);
+}
+
+/**
  * A writable handle on the text a turn is made of. Works for both shapes every protocol
  * uses: a bare string, or an array of parts where exactly one part carries the prose.
  * Returns null when the turn has no prose at all (a pure tool turn) - those are never
@@ -107,6 +132,7 @@ const anthropic = {
         role: m?.role ?? "user",
         text,
         stampable: !isToolOnly && text.trim() !== "" && textSlot(m, "content") !== null,
+        media: hasMedia(content),
         toolCalls: Array.isArray(content) ? content.filter((b) => b?.type === "tool_use").map((b) => ({ name: b.name, input: b.input })) : [],
       };
     });
@@ -156,6 +182,7 @@ const chat = {
         role: m?.role ?? "user",
         text,
         stampable,
+        media: hasMedia(m?.content),
         toolCalls: calls.map((c) => ({ name: c?.function?.name, input: c?.function?.arguments })),
       };
     });
@@ -198,22 +225,22 @@ const responses = {
     const items = body.input || [];
     return items.map((item, index) => {
       if (!item || typeof item !== "object") {
-        return { index, role: "user", text: asText(item), stampable: false, toolCalls: [] };
+        return { index, role: "user", text: asText(item), stampable: false, media: false, toolCalls: [] };
       }
       if (item.type === "function_call") {
         return { index, role: "assistant", text: blockText(item), stampable: false, toolCalls: [{ name: item.name, input: item.arguments }] };
       }
       if (item.type === "function_call_output") {
-        return { index, role: "tool", text: blockText(item), stampable: false, toolCalls: [] };
+        return { index, role: "tool", text: blockText(item), stampable: false, media: hasMedia(item.output), toolCalls: [] };
       }
       if (item.type === "custom_tool_call") {
         return { index, role: "assistant", text: blockText(item), stampable: false, toolCalls: [{ name: item.name, input: item.input }] };
       }
       if (item.type === "custom_tool_call_output") {
-        return { index, role: "tool", text: blockText(item), stampable: false, toolCalls: [] };
+        return { index, role: "tool", text: blockText(item), stampable: false, media: hasMedia(item.output), toolCalls: [] };
       }
       const text = partsText(item.content);
-      return { index, role: item.role ?? "user", text, stampable: text.trim() !== "" && textSlot(item, "content") !== null, toolCalls: [] };
+      return { index, role: item.role ?? "user", text, stampable: text.trim() !== "" && textSlot(item, "content") !== null, media: hasMedia(item.content), toolCalls: [] };
     });
   },
   stamp(body, index, refText) {
@@ -259,6 +286,7 @@ const gemini = {
         role: c?.role === "model" ? "assistant" : c?.role ?? "user",
         text,
         stampable: text.trim() !== "" && textSlot(c, "parts") !== null,
+        media: parts.some(isMediaPart),
         toolCalls: calls.filter((p) => p.functionCall).map((p) => ({ name: p.functionCall.name, input: p.functionCall.args })),
       };
     });
