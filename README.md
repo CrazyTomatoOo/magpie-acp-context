@@ -429,7 +429,7 @@ newest of them.
 bun run lint                         # biome: unused imports, stray escapes, dead parameters -
                                      # the class of defect `bun test` cannot see, because a
                                      # duplicate `function plan` or an unused helper still runs
-bun test test/                       # 431 tests across 21 files: refs, folds, protocols, safety rules,
+bun test test/                       # 441 tests across 23 files: refs, folds, protocols, safety rules,
                                      # the offer/apply invariant matrix, the four-wire gate matrix,
                                      # whole-turn alignment, condensed summaries, tools, usage
                                      # shapes, nudge rules, the cap, the elision, eviction,
@@ -441,7 +441,9 @@ bun test test/                       # 431 tests across 21 files: refs, folds, p
                                      # streamed usage reaching the ledger too,
                                      # the client's session header naming the ledger,
                                      # the three safety gates refused on a real request,
-                                     # and the store surviving a restart
+                                     # the store surviving a restart, and finally the packed
+                                     # tarball installed into a clean project and driving the
+                                     # same gates from the installed copy
 ```
 
 `bun run lint` 和 `bun test test/` 是这个仓库的两个检查。CI 在每次 push 和 PR 上都会跑(`.github/workflows/test.yml`);想在提交前就跑,每个 clone 启用一次自带的 hook(`bun install` 之后 lint 才有得跑,hook 会在缺 biome 时跳过它并说明):

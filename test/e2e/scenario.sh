@@ -23,9 +23,9 @@ probe() {
 # now. The log IS the failure message: a phase that did not fire prints its own FAIL line, and
 # the lane must not carry on past it.
 gates() {
-  local phases="$1" log
-  log="$OUT/gates-${1//,/-}.log"
-  if GW="http://127.0.0.1:$GW_PORT" MODEL=fake/fake-1 SESSION=live-gates OUT="$OUT" \
+  local phases="$1" name="${2:-live-gates}" log
+  log="$OUT/gates-${name//\//-}-${1//,/-}.log"
+  if GW="http://127.0.0.1:$GW_PORT" MODEL=fake/fake-1 SESSION="$name" OUT="$OUT" \
     CAPTURE="$OUT/capture" PHASES="$phases" "$BUN" /live/gates.mjs >"$log" 2>&1; then
     sed 's/^/[e2e] /' "$log"
     say "  ok   live gates fired: $phases"
@@ -259,5 +259,58 @@ gates elide,latch-cleared
 # have and a short conversation does not.
 grep -q '上下文自上次折叠后增长了' "$OUT/capture/"*.body || { say "FAIL no nudge reached the provider"; exit 1; }
 say "nudge reached the provider"
+
+# The installed copy: every section above ran the mounted checkout, but a consumer gets a tarball.
+# Pack it, install it into a clean project, hand the installed path to magpie instead, and fire the
+# first gate phase again. Importing the installed hook resolves its whole module graph, so this is
+# the one check that sees a tarball missing a file `hooks.mjs` imports -- the failure the mounted
+# lane cannot see, and the one the install handoff would hit.
+say "installing from a tarball"
+PKG_SRC=/tmp/pack-src
+PKG_OUT=/tmp/pack
+CONSUMER=/tmp/consumer
+VERSION="$("$BUN" -e 'console.log((await Bun.file("/opt/magpie-acp-context/package.json").json()).version)')"
+mkdir -p "$PKG_SRC" "$PKG_OUT" "$CONSUMER"
+# bun pm pack writes into the package directory, so the read-only mount cannot be packed in place;
+# node_modules stays behind, it is not part of the tarball anyway.
+tar -C /opt/magpie-acp-context --exclude=./node_modules -cf - . | tar -C "$PKG_SRC" -xf -
+(cd "$PKG_SRC" && "$BUN" pm pack --destination "$PKG_OUT" >"$OUT/pack.log" 2>&1) \
+  || { say "FAIL the tarball did not build"; sed 's/^/    /' "$OUT/pack.log"; exit 1; }
+printf '{"name":"consumer","dependencies":{}}\n' >"$CONSUMER/package.json"
+(cd "$CONSUMER" && "$BUN" add "file:$PKG_OUT/magpie-acp-context-$VERSION.tgz" >"$OUT/consumer-add.log" 2>&1) \
+  || { say "FAIL the tarball did not install"; sed 's/^/    /' "$OUT/consumer-add.log"; exit 1; }
+INSTALLED="$CONSUMER/node_modules/magpie-acp-context"
+"$BUN" -e 'const m = await import(process.argv[1]); if (typeof m.onRequest !== "function") process.exit(1);' \
+  "$INSTALLED/hooks.mjs" \
+  || { say "FAIL the installed hook does not import (the tarball is missing a file it needs)"; exit 1; }
+say "  ok   the tarball carries the hook and everything it imports ($(du -sh "$INSTALLED" | cut -f1))"
+
+magpie plugin rm magpie-acp-context >"$OUT/plugin-rm.txt" 2>&1 || true
+magpie plugin add "$INSTALLED" >"$OUT/plugin-installed.txt" 2>&1 || true
+magpie plugin --json >"$OUT/plugin-installed.json" 2>&1 || true
+grep -q 'consumer/node_modules/magpie-acp-context' "$OUT/plugin-installed.json" \
+  || { say "FAIL the installed copy is not the registered plugin"; sed 's/^/    /' "$OUT/plugin-installed.json"; exit 1; }
+grep -q '"loaded": *null' "$OUT/plugin-installed.json" \
+  && { say "FAIL the installed hook did not load"; sed 's/^/    /' "$OUT/plugin-installed.json"; exit 1; }
+
+# Back to the default fallback: the phase below sends a short history, and an elision at 4,000
+# tokens would cut it where the phase expects a fold.
+pkill -f 'magpie web --gateway' || true
+i=0
+while probe "http://127.0.0.1:$GW_PORT/"; do
+  i=$((i + 1)); [ "$i" -gt 80 ] && { say "FAIL gateway did not stop for the installed copy"; exit 1; }
+  sleep 0.25
+done
+magpie web --gateway --no-open >>"$OUT/gateway.log" 2>&1 &
+i=0
+until probe "http://127.0.0.1:$GW_PORT/"; do
+  i=$((i + 1)); [ "$i" -gt 240 ] && { say "FAIL gateway did not come back on the installed copy"; exit 1; }
+  sleep 0.25
+done
+say "gateway running the installed copy"
+
+# A fresh session name: the store keeps what the first `default` run folded, and the same session
+# would see that range as already folded instead of advertising it.
+gates default live-installed
 
 say "OK"
