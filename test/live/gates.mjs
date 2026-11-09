@@ -440,8 +440,8 @@ phaseOf("condensed", async () => {
 });
 
 // 4. The elision and its latch (#19): a declared ceiling is crossed, whole turns leave the wire,
-// a second identical request is byte-identical, a real fold clears the latch, and the count
-// starts over instead of carrying on.
+// a second request over the same history goes out the same way, a real fold clears the latch, and
+// the count starts over instead of carrying on.
 phaseOf("elide", async () => {
   // 12 short turns: over a 4000-token ceiling (each pair is ~400 tokens), and still deep enough
   // that eliding down to 75% leaves two turns a fold can take.
@@ -527,10 +527,17 @@ phaseOf("latch-cleared", async () => {
   );
 
   const win = windowOf(latchThree);
+  if (!win) {
+    // Without a window the fold call would carry "undefined–undefined" and fail for the wrong
+    // reason: say what actually went missing.
+    say("the latch pass advertised no foldable window, so there is nothing to fold away from the latch");
+    say(lineOf(latchThree) || latchThree.split("\n")[0]);
+    process.exit(1);
+  }
   const foldCall = callMessage("call_latch_fold");
-  foldCall.tool_calls[0].function.arguments = JSON.stringify({ content: `${win?.fromRef}–${win?.toRef} 旧的一轮\n${summary}` });
+  foldCall.tool_calls[0].function.arguments = JSON.stringify({ content: `${win.fromRef}–${win.toRef} 旧的一轮\n${summary}` });
   const folded = [{ role: "user", content: "开始。" }, foldCall, ackMessage("call_latch_fold", template), ...latched];
-  say(`folding ${win?.fromRef}–${win?.toRef} while the latch is set`);
+  say(`folding ${win.fromRef}–${win.toRef} while the latch is set`);
   await send(folded, "fold");
   const afterFold = await status("fold");
   const windowAfter = lineOf(afterFold);
