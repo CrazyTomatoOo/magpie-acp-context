@@ -116,6 +116,20 @@ sequenceDiagram
 - **范围跨出当前历史就不折**:anchor 不在当前历史里 → 丢弃该 fold(openviking 的同类规则,防止 compaction 后预算永久耗尽)。
 - **转义伪造**:被折叠的原文与模型写的摘要都可能包含 `m00007`、`$$…$$`、`📦 [ACP]` 形状的文本;渲染块时必须转义,否则模型可以伪造 ref 边界。
 
+哪段代码执行上面每一条——改闸门前先看这张表,省的重新推导一遍:
+
+| 判据 | 位置(`hooks.mjs`) | 管什么 |
+|---|---|---|
+| `citable(unit)` | 判据定义 | 端点:`stampable` + 有 ref + 不是媒体。报价与执行共用这一个 |
+| `citableStart` / `citableEnd` | 判据定义 | 窗口起点/终点必须是 `citable` |
+| `pairSafe` | 判据定义 | 调用与结果不被切开 |
+| `barriers` / `media` | `planFolds` | 自家工具记录、媒体:范围不得跨越 |
+| `trimPastBarriers` | 判据定义 | 报价起点落在窗口内最新 barrier 之后 |
+| `foldable` | `planFolds` | 已结算覆盖跳过、字节下限(按移位后的起点算) |
+| apply 检查顺序 | `planFolds` 的 `compressCalls` 循环 | 端点 → 媒体 → 自家记录 → 已覆盖 → 窗口 → 下限 → 摘要 |
+
+新加一类 barrier 或一道闸门时,`test/invariants.test.mjs` 是那个会变红的默认检查:它把每份合成的历史报价出去,原样折一次,断言能结算。
+
 ---
 
 ## 8. 配置项

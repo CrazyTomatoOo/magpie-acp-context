@@ -323,9 +323,9 @@ facts and the measured run.
 ## Tests
 
 ```sh
-bun test test/                       # 85 unit tests: refs, folds, protocols, safety rules,
-                                     # tools, usage shapes, nudge rules, eviction,
-                                     # compaction, reconcile, CLI, inherited sessions,
+bun test test/                       # 242 tests across 14 files: refs, folds, protocols, safety rules,
+                                     # the offer/apply invariant matrix, tools, usage shapes, nudge rules,
+                                     # eviction, compaction, reconcile, CLI, inherited sessions,
                                      # and the tool-name shapes real wires send back
 ./test/e2e/run.sh                    # container end-to-end: 6,933 B request → 1,269 B on the wire,
                                      # a nudge on the wire, all four tools over MCP,
@@ -333,6 +333,12 @@ bun test test/                       # 85 unit tests: refs, folds, protocols, sa
                                      # streamed usage reaching the ledger too,
                                      # the client's session header naming the ledger,
                                      # and the store surviving a restart
+```
+
+`bun test test/` 是这个仓库唯一的检查。CI 在每次 push 和 PR 上都会跑(`.github/workflows/test.yml`);想在提交前就跑,每个 clone 启用一次自带的 hook:
+
+```sh
+git config core.hooksPath .githooks    # 关掉:git config --unset core.hooksPath
 ```
 
 A real client has also been driven through a containerised magpie (omp v18.16.0, two turns over

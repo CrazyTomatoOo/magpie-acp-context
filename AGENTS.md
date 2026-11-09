@@ -11,3 +11,7 @@ Five canonical roles map to labels of the same name: `needs-triage`, `needs-info
 ### Domain docs
 
 Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Coding standards
+
+Review-time rules no check can enforce: gates ship both ways, a new gate reaches the offer side through the shared judgment, refusals name their ref. See `docs/agents/coding-standards.md`.
