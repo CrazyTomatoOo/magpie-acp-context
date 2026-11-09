@@ -43,6 +43,7 @@ docker run --rm \
   -v "$ROOT":/opt/magpie-acp-context:ro \
   -v "$HERE":/work:ro \
   -v "$ROOT/test/host":/host:ro \
+  -v "$ROOT/test/live":/live:ro \
   -v "$OUT_DIR":/out \
   -e PATH=/tmp/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
   "$IMAGE" bash -c '

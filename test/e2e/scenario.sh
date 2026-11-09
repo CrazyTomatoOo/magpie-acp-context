@@ -243,4 +243,14 @@ OUT="$OUT/stream" "$BUN" /work/mcp.mjs "http://127.0.0.1:$GW_PORT" magpie-acp-co
 grep -q '计费 prompt=2,222 tok' "$OUT/stream/mcp.json" || { say "FAIL streamed usage never reached the ledger"; sed 's/^/    /' "$OUT/stream.log"; exit 1; }
 say "streamed usage recorded"
 
+# The four-gate live proof (#15): one good range folds, three bad ranges are refused with
+# their reasons, and acp_status shows all four. Every range is derived from the window the
+# hook advertises, so this holds under this lane's KEEP_TURNS=1 as well as the shipped 3 -
+# a hard-coded range would only be true for one of them.
+GW="http://127.0.0.1:$GW_PORT" MODEL=fake/fake-1 SESSION=live-gates OUT="$OUT" \
+  "$BUN" /live/gates.mjs >"$OUT/gates.log" 2>&1 || true
+sed 's/^/[e2e] /' "$OUT/gates.log"
+grep -q 'OK - one fold, three refusals, all four in acp_status' "$OUT/gates.log" || { say "FAIL the four-gate live proof"; exit 1; }
+say "four gates fired live"
+
 say "OK"

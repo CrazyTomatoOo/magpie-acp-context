@@ -49,9 +49,37 @@ proxy rewrites bodies. That is the same split the community plugins
 Safety rules: never touch the pending turn, never split a tool call from its result, never
 fold without a real compress call, never fold a range that contains this plugin's own tool
 records (a compress/decompress/acp_status call or its reply — the record of what was folded has
-to stay where the model can read it), refuse ranges under `minRangeBytes`, neutralize ref-lookalike
+to stay where the model can read it), never fold a range that holds an image, file or audio part
+(only the text survives, so `decompress` could not give the media back), never cut a turn in half
+(a range widens out to whole turns, and one that cannot fit the window is refused rather than
+trimmed), refuse ranges under `minRangeBytes`, neutralize ref-lookalike
 text in summaries (`m00007` → `m#00007`, `[acp]` → `[acp ]`) so the model cannot forge a fold
 boundary, and fail open on any error.
+
+One job needs no fold at all: when a single tool result is oversized (default 32,000 tokens,
+≈128 KB, `cap.unitTokens`) the hook stores its original under its block id and puts one line in
+its place — `[acp] 已省略 121,340 字符,原文 id 4f3a9c0d1e2b7a88,可用 decompress 取回`. The original
+goes to disk first: if the store cannot be written the unit is sent whole, because a cut with no
+way back is worse than a large request. `fallback: "off"` turns this off; it is on by default
+because it is the only boundary here that does not depend on the model cooperating.
+
+### Refusals on the wire
+
+Every gate that refuses a range says so twice: in the note appended to the turn (first three,
+then `等`), and in `上次折叠没生效:` in `acp_status`, so nothing is refused silently. The sentences
+are:
+
+| refusal | what it means |
+|---|---|
+| `起点在终点之后` | the two refs are reversed |
+| `两端的消息不可折叠(工具调用或工具结果)` | an endpoint is a tool call or a tool result — nothing to hang a marker on |
+| `起点落在已结算的折叠 X–Y 里,请从 Z 开始` | the range starts inside a marker that is already in the transcript; folding a part of a summary makes a hole |
+| `范围对不齐整轮(起点所在的轮在窗口外,或终点所在的轮超出窗口),请从某一轮的起点开始` | widening would leave the window, or the two ends belong to turns that cannot both be included |
+| `范围含媒体消息 <ref>(图片/文件/音频),原文只存文本,折了之后 decompress 也取不回媒体;请把范围收在它之后` | an image/file/audio part sits inside the span |
+| `范围含插件自己的压缩记录 <ref>(压缩/取回/状态的调用或结果)` | the span covers a compress/decompress/acp_status call or its reply |
+| `超出可折叠窗口(m00003–m00019),最近的 1 轮要留着` | the range reaches into the protected tail |
+| `这段只有 N 字节,低于 minRangeBytes=5000` | too small to be worth a summary — nothing is gained by folding it |
+| `摘要只有 N 字节,至少要 40 字节;被折叠的原文之后只剩摘要` | the summary would be shorter than what the model needs to carry on |
 
 ## Tools
 
@@ -139,6 +167,10 @@ ledger on purpose: a skipped request must not create a session entry that would 
 What lands there: the switch being off, the canary list not covering this caller, the tool gate
 (a client that cannot reach our tools), a protocol whose body cannot be read, and an exception
 inside the hook itself (the one case where the request went out uncompressed with nothing said).
+
+A request that *was* served, with a `compress` call that was refused, is not a skip: the range
+failed a gate while the rest of the request went through, so it lands in `上次折叠没生效:` with the
+reason — the table above lists every sentence.
 
 ## Operator CLI
 
@@ -329,6 +361,28 @@ Refs keep their numbers (`decompress m00021` still names the same message) and t
 back from bili's `blocks` table. Read-only on bili's side. See
 [`docs/magpie-acp-plugin-design.md`](docs/magpie-acp-plugin-design.md) §19.4 for the schema
 facts and the measured run.
+
+## Changelog
+
+Newest first. `git tag -l 'v*'` lists the earlier releases; `magpie-plugin` always points at the
+newest of them.
+
+**0.4.0** — the safety boundary closes, and none of it depends on the model cooperating:
+
+- a fold may no longer start inside a span that is already folded, and the offer is built after
+  settlement, so a request never advertises the range it just folded;
+- a range holding an image, file or audio part is refused (only text is stored, so `decompress`
+  could never give the media back), and a fold never starts before the newest such part;
+- a fold widens to whole turns — start back to the turn start, end forward to the turn end — and
+  a range that cannot fit the window is refused rather than cut;
+- refs read in history order again: a marker inherits the ref of the span it replaced, and a ref
+  that names two places resolves to the first occurrence at or after the start;
+- a single oversized unit (32,000 tokens) is replaced by one `已省略 … 原文 id …` line after its
+  original reaches the store — `fallback: "cap"`, on by default;
+- the nudge fires once per growth epoch (`hint:<floor>:<folds>`) and only when a fold would buy
+  at least `max(1, 10% of the floor)` tokens, instead of on every request past the floor;
+- `test/live/gates.mjs` proves all of it on a real gateway: one fold, three refusals, and the
+  ledger showing all four.
 
 ## Tests
 

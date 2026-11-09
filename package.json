@@ -1,6 +1,6 @@
 {
   "name": "magpie-acp-context",
-  "version": "0.3.7",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "main": "./tools.mjs",
@@ -21,6 +21,11 @@
       "keepRecentTurns": 3,
       "nudge": {
         "growthFloor": 50000
+      },
+      "fallback": "cap",
+      "cap": {
+        "unitTokens": 32000,
+        "keepChars": 2000
       },
       "store": {
         "dir": "~/.local/share/magpie-acp",
