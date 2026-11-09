@@ -67,6 +67,7 @@ cp "$BODY" "$OUT/upstream-body.json"
 say "upstream received $(ls "$OUT"/capture/*.body | wc -l) body/bodies"
 
 fail=0
+bad() { say "  FAIL $*"; fail=1; }
 check() {
   if grep -qF -- "$2" "$OUT/upstream-body.json"; then
     say "  ok   $1"
@@ -75,12 +76,12 @@ check() {
     fail=1
   fi
 }
-check "fold marker reached the provider" '[acp] m00002–m00005'
+check "fold marker reached the provider" '[acp] m00001–m00004'
 check "summary text reached the provider" '用户要求读文件并总结'
-check "first turn was stamped" '[m00001]'
+check "the turn after the fold was stamped" '[m00005]'
 check "system prompt kept its bytes" 'You are a careful agent.'
 if grep -q '\[m00001\] You are' "$OUT/upstream-body.json"; then
-  fail "system prompt was stamped with a ref"
+  bad "system prompt was stamped with a ref"
 fi
 check "the note was appended to the pending turn" '[acp] 每条历史消息前'
 
@@ -94,8 +95,8 @@ mkdir -p "$OUT/gated"
 GATED=$(latest_body)
 [ -n "$GATED" ] || { say "FAIL the gated request never reached the provider"; exit 1; }
 cp "$GATED" "$OUT/gated-body.json"
-if grep -q '\[m00001\]' "$OUT/gated-body.json"; then fail "a client that declares no tool of ours was stamped"; fi
-if grep -q '\[acp\]' "$OUT/gated-body.json"; then fail "a client that declares no tool of ours got the note"; fi
+if grep -q '\[m00001\]' "$OUT/gated-body.json"; then bad "a client that declares no tool of ours was stamped"; fi
+if grep -q '\[acp\]' "$OUT/gated-body.json"; then bad "a client that declares no tool of ours got the note"; fi
 [ "$fail" -eq 0 ] && say "  ok   tool gate: a client that declares no tool of ours is untouched"
 
 "$BUN" /work/request.mjs --own-tools >/tmp/req.json
@@ -104,14 +105,14 @@ mkdir -p "$OUT/own"
 OWN=$(latest_body)
 [ -n "$OWN" ] || { say "FAIL the own-tools request never reached the provider"; exit 1; }
 cp "$OWN" "$OUT/own-body.json"
-grep -q '\[m00001\]' "$OUT/own-body.json" || fail "a client that declares our tool was not served"
+grep -q '\[acp\] m00001–m00004' "$OUT/own-body.json" || bad "a client that declares our tool was not served"
 
 "$BUN" /work/request.mjs --omp-tools >/tmp/req.json
 mkdir -p "$OUT/omp"
 "$BUN" /work/post.mjs "http://127.0.0.1:$GW_PORT/v1/chat/completions" "$OUT/omp" >/dev/null 2>&1 || true
 OMP=$(latest_body)
 [ -n "$OMP" ] || { say "FAIL the omp-shaped request never reached the provider"; exit 1; }
-grep -q '\[m00001\]' "$OMP" || fail "omp reaches our tools through eval, so it must be served"
+grep -q '\[acp\] m00001–m00004' "$OMP" || bad "omp reaches our tools through eval, so it must be served"
 [ "$fail" -eq 0 ] && say "  ok   tool gate: our tool, or a code surface, is served"
 
 if grep -qF "$(printf 'x%.0s' $(seq 1 200))" "$OUT/upstream-body.json"; then
