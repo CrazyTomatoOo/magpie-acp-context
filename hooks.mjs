@@ -127,8 +127,30 @@ function sessionKeyOf(ctx) {
   return "default";
 }
 
-function unitIds(units) {
-  return units.map((u) => blockIdOf(`${u.role}\u0000${u.text}`));
+const CLIP_ID = /\[acp\] 已省略 [\d,]+ 字符,原文 id ([0-9a-f]{16})/;
+
+/**
+ * A marker is not new content: it stands where a span used to be, so it keeps the identity — and
+ * therefore the ref — of what it replaced. Without that a marker, which is new text sitting in
+ * front of units that were stamped earlier, puts a high ref ahead of lower ones: inside one
+ * request the refs stop reading in history order, and the note can advertise a range whose start
+ * sorts after its own end (measured: `m00385–m00374` in a 270-block fold, #17).
+ *
+ * A clip marker carries the block id it replaced, so the same rule applies to a cut unit: it is
+ * still the same unit, only shorter.
+ */
+function unitIds(units, folds = []) {
+  const heads = new Map();
+  for (const fold of folds) if (fold.startBlock) heads.set(markerHead(fold), fold.startBlock);
+  return units.map((u) => {
+    const text = String(u.text ?? "");
+    // The client sends the marker back with the stamp in front of it, so the head is read past it.
+    const bare = text.replace(/^\[m[0-9]+\]\s*/, "");
+    for (const [head, blockId] of heads) if (bare.startsWith(head)) return blockId;
+    const clip = CLIP_ID.exec(text);
+    if (clip) return clip[1];
+    return blockIdOf(`${u.role}\u0000${text}`);
+  });
 }
 
 /** Shrink or refuse a range until it no longer cuts a tool call away from its result. */
@@ -245,6 +267,27 @@ function atTurnEnd(units, i, starts = turnStarts(units, units.length)) {
   return next > 0 ? next - 1 === i : i === units.length - 1;
 }
 
+/**
+ * The last unit of the turn before the one holding `i`, or -1 when `i` sits in the first turn.
+ *
+ * Giving back a whole turn is the only way to shorten an offer without cutting one: the end must
+ * stay a turn end, otherwise the note asks for a range its own alignment would widen (#11).
+ */
+function previousTurnEnd(units, i, starts = turnStarts(units, units.length)) {
+  let open = -1;
+  for (const t of starts) {
+    if (t > i) break;
+    open = t;
+  }
+  return open > 0 ? open - 1 : -1;
+}
+
+/** The first turn start after `i`, or -1 when `i` sits in the last turn. */
+function nextTurnStart(units, i, starts = turnStarts(units, units.length)) {
+  for (const t of starts) if (t > i) return t;
+  return -1;
+}
+
 /** The newest unit a range can END at without dragging its tool result past `cap`. */
 function citableEnd(units, cap) {
   for (let e = cap; e >= 0; e -= 1) {
@@ -302,11 +345,36 @@ function foldWindow(units, keepRecentTurns) {
 }
 
 export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
+  // A ref is a content id, so identical content shares one (#17). Two positions therefore answer
+  // to one ref, and which one a range means is a judgment this function has to make once, not two
+  // different ones in two places: the first occurrence answers a start, and an end is the first
+  // occurrence at or after the start (falling back to the last when the range would be empty).
   const idToIndex = new Map();
+  const idToIndices = new Map();
   for (const unit of units) {
     const ref = refs[unit.blockId];
-    if (ref) idToIndex.set(ref, unit.index);
+    if (!ref) continue;
+    if (!idToIndex.has(ref)) idToIndex.set(ref, unit.index);
+    const list = idToIndices.get(ref);
+    if (list) list.push(unit.index);
+    else idToIndices.set(ref, [unit.index]);
   }
+  const indicesOf = (ref) => idToIndices.get(String(ref ?? "").trim()) ?? [];
+  const startIndexFor = (ref) => indicesOf(ref)[0];
+  const endIndexFor = (ref, startIndex) => {
+    const list = indicesOf(ref);
+    if (!list.length) return undefined;
+    return list.find((i) => i >= startIndex) ?? list[list.length - 1];
+  };
+  // An endpoint that names two places cannot be advertised: apply could only guess which copy the
+  // note meant. The offer below walks past a repeated start and gives back whole turns from a
+  // repeated end, so every range the note prints resolves to exactly the span it names.
+  const refCount = new Map();
+  for (const unit of units) {
+    const ref = refs[unit.blockId];
+    if (ref) refCount.set(ref, (refCount.get(ref) ?? 0) + 1);
+  }
+  const uniqueRef = (index) => refCount.get(refs[units[index]?.blockId]) === 1;
   const window0 = foldWindow(units, cfg.keepRecentTurns);
   // Barriers are not just refusals: a range may not reach across one, and the offer may not start
   // before the newest one. Our own tool traffic is one kind (#9); a media unit is the other,
@@ -394,8 +462,8 @@ export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
     }
     for (const entry of call.entries) {
       const label = `${String(entry.startId).trim()}–${String(entry.endId).trim()}`;
-      const startIndex = idToIndex.get(String(entry.startId).trim());
-      const endIndex = idToIndex.get(String(entry.endId).trim());
+      const startIndex = startIndexFor(entry.startId);
+      const endIndex = startIndex === undefined ? undefined : endIndexFor(entry.endId, startIndex);
       if (startIndex === undefined || endIndex === undefined) {
         unresolved.push(label);
         continue;
@@ -514,11 +582,31 @@ export function planFolds({ units, refs, session, cfg, now = Date.now() }) {
         if (from0 > window.to) return null;
         const aligned = alignToTurns(units, from0, window.to, window.from, windowEnd, turns);
         if (!aligned) return null;
-        const from = citableStart(units, Math.max(aligned.start, window.from), aligned.end);
-        if (from > aligned.end) return null;
-        const spanBytes = units.slice(from, aligned.end + 1).reduce((n, u) => n + utf8Bytes(u.text), 0);
+        // An endpoint whose ref names two places cannot be advertised: apply would have to guess
+        // which copy the note meant, and the guess moves the cut (#17). A repeated end gives back
+        // whole turns, a repeated start moves forward one turn at a time, and when neither move is
+        // left there is no offer at all - the same discipline the barrier trim above follows.
+        // Every ref a unique endpoint carries occurs once, so it is also its first occurrence, and
+        // that is exactly where apply resolves it: the printed range is the settled range.
+        let from = citableStart(units, Math.max(aligned.start, window.from), aligned.end);
+        let to = aligned.end;
+        for (;;) {
+          if (from > to) return null;
+          if (!uniqueRef(to)) {
+            const prev = previousTurnEnd(units, to, turns);
+            if (prev < 0) return null;
+            to = prev;
+            continue;
+          }
+          if (uniqueRef(from)) break;
+          const next = nextTurnStart(units, from, turns);
+          const moved = next < 0 ? to + 1 : citableStart(units, next, to);
+          if (moved > to) return null;
+          from = moved;
+        }
+        const spanBytes = units.slice(from, to + 1).reduce((n, u) => n + utf8Bytes(u.text), 0);
         if (spanBytes < Number(cfg.minRangeBytes)) return null;
-        return { from, to: aligned.end };
+        return { from, to };
       })()
     : null;
   const unrecognized = unknownShapes(units, compressCalls(units));
@@ -666,7 +754,7 @@ export async function onRequest(body, ctx) {
       }
     }
 
-    const ids = unitIds(units);
+    const ids = unitIds(units, session.folds());
 
     // A ref is the only way a compress range can name a unit, so leaving system/developer
     // prompts unnumbered makes them unfoldable by construction rather than by a check.
