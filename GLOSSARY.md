@@ -19,6 +19,17 @@ Recording a fold the agent asked for, on the next request, once the tool result 
 summary is visible in the history.
 _Avoid_: commit, apply, finalize
 
+**Nudge**:
+Advice the hook writes into the transcript, asking the agent to fold. It changes nothing on its
+own, so a model that ignores it is not a malfunction — it is the case the fallback exists for.
+_Avoid_: warning, trigger (both imply a mechanism)
+
+**Fallback**:
+Work the hook does to the request itself when nobody folds: clipping one oversized unit, or
+eliding whole turns once the limit is known and crossed. It costs the transcript bytes, and every
+original stays addressable by ref, so it is bounded by the same recoverability rule as a fold.
+_Avoid_: truncation, pruning, eviction (each names one of its legs, never the duty)
+
 **Tool gate**:
 The hook's check for whether a client can call this plugin's tools at all. No tool of ours and no
 code surface that could reach MCP means the request is passed through untouched.
